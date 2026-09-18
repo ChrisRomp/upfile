@@ -76,9 +76,6 @@ func (a *App) linkInfo(l Link, expires int64) (map[string]any, error) {
 }
 
 func (a *App) exchange(w http.ResponseWriter, r *http.Request) error {
-	if a.limited("exchange-global", 120) {
-		return problem(429, "rate_limited", "Too many link attempts. Please wait a minute.")
-	}
 	id := r.PathValue("link")
 	if !validID(id) {
 		return unavailable()
@@ -98,6 +95,9 @@ func (a *App) exchange(w http.ResponseWriter, r *http.Request) error {
 	}
 	if len(v.Secret) != 64 || subtle.ConstantTimeCompare([]byte(digest(v.Secret)), []byte(l.Hash)) != 1 || l.Status != "active" {
 		return unavailable()
+	}
+	if a.limited("exchange:"+l.ID, 120) {
+		return problem(429, "rate_limited", "Too many attempts for this link. Please wait a minute.")
 	}
 	if existing, _, expiry, e := a.authorized(r); e == nil {
 		info, e := a.linkInfo(existing, expiry)

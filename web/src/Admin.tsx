@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, errorMessage } from './api';
 import { bytes, date, localDateTime, megabytes, readMegabytes, utf8Length } from './format';
 import type { Audit, Collection, Container, CreatedContainer, Link, ReceivedFile, Settings } from './types';
 import { Badge, Brand, Confirm, Empty, Modal, MutationForm, Notice, Pagination, Search } from './ui';
 
 const LIMIT = 25;
+const REQUEST_TABS = ['files', 'links'] as const;
+type RequestTab = typeof REQUEST_TABS[number];
 function useResource<T>(path: string) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState('');
@@ -178,7 +180,9 @@ function ContainersPage({ settings }: { settings: Settings }) {
 
 function ContainerPage({ id, settings, refreshSettings }: { id: string; settings: Settings; refreshSettings: () => void }) {
   const resource = useResource<Container>(`/api/containers/${id}`);
-  const [tab, setTab] = useState<'files' | 'links'>('files');
+  const [tab, setTab] = useState<RequestTab>('files');
+  const [focusedTab, setFocusedTab] = useState<RequestTab>('files');
+  const tabRefs = useRef<Record<RequestTab, HTMLButtonElement | null>>({ files: null, links: null });
   const [edit, setEdit] = useState(false);
   const [deleting, setDeleting] = useState<Container>();
   const [actionError, setActionError] = useState('');
@@ -186,6 +190,19 @@ function ContainerPage({ id, settings, refreshSettings }: { id: string; settings
   const [deleted, setDeleted] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const container = resource.data;
+  function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, current: RequestTab) {
+    const index = REQUEST_TABS.indexOf(current);
+    let target: RequestTab;
+    switch (event.key) {
+      case 'ArrowLeft': target = REQUEST_TABS[(index + REQUEST_TABS.length - 1) % REQUEST_TABS.length]; break;
+      case 'ArrowRight': target = REQUEST_TABS[(index + 1) % REQUEST_TABS.length]; break;
+      case 'Home': target = REQUEST_TABS[0]; break;
+      case 'End': target = REQUEST_TABS[REQUEST_TABS.length - 1]; break;
+      default: return;
+    }
+    event.preventDefault();
+    tabRefs.current[target]?.focus();
+  }
   function refresh() { resource.refresh(); refreshSettings(); setRefreshVersion((value) => value + 1); }
   async function confirmDeletion() {
     setActionError('');
@@ -202,13 +219,19 @@ function ContainerPage({ id, settings, refreshSettings }: { id: string; settings
       {container.status === 'deleting' && <Notice>Deletion is in progress. Links are disabled; file cleanup may still be running. Refresh to check its status and review Settings for cleanup errors.</Notice>}
       {container.instructions && <p className="instructions">{container.instructions}</p>}
       <p className="small muted">Effective per-file limit: {bytes(container.effective_max_bytes ?? Math.min(settings.max_file_bytes, container.max_file_bytes ?? settings.max_file_bytes))} · {container.max_file_bytes === null ? 'Inherits the global maximum' : `Request override: ${bytes(container.max_file_bytes)}`}</p>
-      <div className="tabs" role="tablist" aria-label="Request sections">
-        <button id="files-tab" role="tab" aria-selected={tab === 'files'} aria-controls="files-panel" onClick={() => setTab('files')}>Received files</button>
-        <button id="links-tab" role="tab" aria-selected={tab === 'links'} aria-controls="links-panel" onClick={() => setTab('links')}>Upload links</button>
+      <div className="tabs" role="tablist" aria-label="Request sections"
+        onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedTab(tab); }}>
+        {REQUEST_TABS.map(value => <button key={value} id={`${value}-tab`} type="button" role="tab"
+          ref={(element) => { tabRefs.current[value] = element; }}
+          tabIndex={focusedTab === value ? 0 : -1} aria-selected={tab === value} aria-controls={`${value}-panel`}
+          onFocus={() => setFocusedTab(value)} onKeyDown={(event) => moveTabFocus(event, value)}
+          onClick={() => { setFocusedTab(value); setTab(value); }}>{value === 'files' ? 'Received files' : 'Upload links'}</button>)}
       </div>
-      <section id={`${tab}-panel`} role="tabpanel" aria-labelledby={`${tab}-tab`}>
-        {tab === 'files' ? <FilesPanel key={`files-${refreshVersion}`} container={container} onChange={() => { resource.refresh(); refreshSettings(); }} /> :
-          <LinksPanel key={`links-${refreshVersion}`} container={container} settings={settings} onChange={() => { resource.refresh(); refreshSettings(); }} />}
+      <section id="files-panel" role="tabpanel" aria-labelledby="files-tab" hidden={tab !== 'files'}>
+        {tab === 'files' && <FilesPanel key={`files-${refreshVersion}`} container={container} onChange={() => { resource.refresh(); refreshSettings(); }} />}
+      </section>
+      <section id="links-panel" role="tabpanel" aria-labelledby="links-tab" hidden={tab !== 'links'}>
+        {tab === 'links' && <LinksPanel key={`links-${refreshVersion}`} container={container} settings={settings} onChange={() => { resource.refresh(); refreshSettings(); }} />}
       </section>
       {edit && <ContainerForm initial={container} globalMax={settings.max_file_bytes} onSaved={refresh} onClose={() => setEdit(false)} />}
       {deleting && <Confirm title="Delete this request?" requiredName={deleting.name} label="Delete request and contents" onClose={() => setDeleting(undefined)} action={async () => {

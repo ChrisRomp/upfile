@@ -56,6 +56,11 @@ Request-wide active transfer counts are shown in file deletion confirmations:
 the file model does not expose per-file active download counts. Pending cleanup
 is displayed until refreshed; aggregate cleanup errors appear in Settings.
 
+Request sections use manually activated ARIA tabs: Left/Right wrap focus,
+Home/End focus the first/last tab, and Enter/Space selects it. Only one tab is
+in the tab order; leaving and re-entering the tab list returns to the selected
+tab. Moving focus alone does not fetch or replace a section.
+
 ## Tests
 
 `npm test` covers admission idempotency, serial order, completed receipts,

@@ -132,50 +132,63 @@ func (a *App) saveContainer(w http.ResponseWriter, r *http.Request) error {
 			now.Add(time.Duration(s.DefaultLinkHours)*time.Hour).Unix(), now.Unix(), digest(secret)); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`INSERT INTO audit(actor,action,target,created) VALUES
-			(?,'container.save',?,?),(?,'link.save',?,?)`,
-			actor(r), id, now.Unix(), actor(r), linkID, now.Unix()); err != nil {
+		if err = a.auditTx(tx, actor(r), "container.save", id); err != nil {
 			return err
 		}
-		if _, err = tx.Exec("DELETE FROM audit WHERE id <= (SELECT coalesce(max(id),0)-10000 FROM audit)"); err != nil {
+		if err = a.auditTx(tx, actor(r), "link.save", linkID); err != nil {
 			return err
 		}
-		if err = tx.Commit(); err != nil {
-			return err
-		}
-		container, err := a.container(id)
+		container, err := a.containerFrom(tx, id)
 		if err != nil {
 			return err
 		}
-		link, err := a.link(linkID)
+		link, err := a.linkFrom(tx, linkID)
 		if err != nil {
 			return err
 		}
 		link.URL = a.cfg.PublicOrigin + "/u/" + linkID + "#" + secret
+		if err = tx.Commit(); err != nil {
+			return err
+		}
 		writeJSON(w, 200, CreatedContainer{Container: container, InitialLink: link})
 		return nil
-	} else {
-		c, e := a.container(id)
-		if e != nil {
-			return e
-		}
-		if c.Status != "active" {
-			return problem(409, "deleting", "This container is being deleted.")
-		}
-		_, err = a.db.Exec("UPDATE containers SET name=?,instructions=?,max_file=? WHERE id=?", v.Name, v.Instructions, v.Max, id)
 	}
+	c, err := a.container(id)
 	if err != nil {
 		return err
 	}
-	if err = a.audit(actor(r), "container.save", id); err != nil {
-		return err
+	if c.Status != "active" {
+		return problem(409, "deleting", "This container is being deleted.")
 	}
-	if err = a.invalidateOversize(); err != nil {
-		return err
-	}
-	vout, err := a.container(id)
+	tx, err := a.db.Begin()
 	if err != nil {
 		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE containers SET name=?,instructions=?,max_file=? WHERE id=?", v.Name, v.Instructions, v.Max, id); err != nil {
+		return err
+	}
+	if err = a.auditTx(tx, actor(r), "container.save", id); err != nil {
+		return err
+	}
+	ids, err := idsFrom(tx, "SELECT id FROM links WHERE container_id=?", id)
+	if err != nil {
+		return err
+	}
+	for _, linkID := range ids {
+		if err = a.invalidateEditedLinkTx(tx, linkID); err != nil {
+			return err
+		}
+	}
+	vout, err := a.containerFrom(tx, id)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if err = a.stopInvalidWriters(); err != nil {
+		a.logCleanup(fmt.Errorf("container.save %s: %w", id, err))
 	}
 	writeJSON(w, 200, vout)
 	return nil
@@ -251,28 +264,58 @@ func (a *App) saveLink(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		id, secret = opaque(16), opaque(32)
-		_, err = a.db.Exec("INSERT INTO links(id,container_id,sender,expires,max_file,created,hash) VALUES(?,?,?,?,?,?,?)", id, cid, v.Sender, v.Expires, v.Max, a.now().Unix(), digest(secret))
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if secret != "" {
+		_, err = tx.Exec("INSERT INTO links(id,container_id,sender,expires,max_file,created,hash) VALUES(?,?,?,?,?,?,?)", id, cid, v.Sender, v.Expires, v.Max, a.now().Unix(), digest(secret))
 	} else {
-		_, err = a.db.Exec("UPDATE links SET sender=?,expires=?,max_file=? WHERE id=?", v.Sender, v.Expires, v.Max, id)
+		_, err = tx.Exec("UPDATE links SET sender=?,expires=?,max_file=? WHERE id=?", v.Sender, v.Expires, v.Max, id)
 	}
 	if err != nil {
 		return err
 	}
-	if err = a.audit(actor(r), "link.save", id); err != nil {
+	if err = a.auditTx(tx, actor(r), "link.save", id); err != nil {
 		return err
 	}
-	if err = a.invalidateOversize(); err != nil {
-		return err
+	if secret == "" {
+		if err = a.invalidateEditedLinkTx(tx, id); err != nil {
+			return err
+		}
 	}
-	l, err := a.link(id)
+	l, err := a.linkFrom(tx, id)
 	if err != nil {
 		return err
 	}
 	if secret != "" {
 		l.URL = a.cfg.PublicOrigin + "/u/" + id + "#" + secret
 	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if secret == "" {
+		if err = a.stopInvalidWriters(); err != nil {
+			a.logCleanup(fmt.Errorf("link.save %s: %w", id, err))
+		}
+	}
 	writeJSON(w, 200, l)
 	return nil
+}
+
+func (a *App) invalidateEditedLinkTx(tx *sql.Tx, id string) error {
+	l, err := a.linkFrom(tx, id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE attempts SET status='canceled',cleanup=1
+		WHERE link_id=? AND status IN ('allocating','uploading','finalizing')
+		AND (?!='active' OR size>? OR NOT EXISTS(
+			SELECT 1 FROM sessions WHERE hash=attempts.session_hash
+			AND link_id=attempts.link_id AND expires>?))`, id, l.Status, l.EffectiveMax, a.now().Unix())
+	return err
 }
 func (a *App) revokeLink(id, actor string, rotate bool) (Link, error) {
 	l, err := a.link(id)
@@ -406,20 +449,27 @@ func (a *App) deleteFile(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if _, err = a.db.Exec("UPDATE files SET status='deleting' WHERE id=?", f.ID); err != nil {
-		return err
-	}
-	if err = a.audit(actor(r), "file.delete", f.ID); err != nil {
-		return err
+	if f.Status != "deleting" {
+		tx, err := a.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec("UPDATE files SET status='deleting' WHERE id=?", f.ID); err != nil {
+			return err
+		}
+		if err = a.auditTx(tx, actor(r), "file.delete", f.ID); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
 	}
 	a.stopDownloads(f.ID, "")
 	if err = a.cleanupFile(f.ID); err != nil {
-		return err
+		a.logCleanup(fmt.Errorf("file.delete %s: %w", f.ID, err))
 	}
-	var state string
-	if err = a.db.QueryRow("SELECT status FROM files WHERE id=?", f.ID).Scan(&state); err != nil {
-		return err
-	}
+	state := a.deletionStatus("SELECT status FROM files WHERE id=?", f.ID, "file.delete")
 	writeJSON(w, 200, map[string]string{"status": state})
 	return nil
 }
@@ -428,41 +478,49 @@ func (a *App) deleteContainer(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	tx, err := a.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, q := range []string{
-		"UPDATE containers SET status='deleting' WHERE id=?",
-		"UPDATE links SET revoked=1 WHERE container_id=?",
-		"DELETE FROM sessions WHERE link_id IN (SELECT id FROM links WHERE container_id=?)",
-		"UPDATE attempts SET status='canceled',cleanup=1 WHERE link_id IN (SELECT id FROM links WHERE container_id=?) AND status IN ('allocating','uploading','finalizing','abandoned')",
-		"UPDATE files SET status='deleting' WHERE container_id=? AND status!='deleted'",
-	} {
-		if _, err = tx.Exec(q, c.ID); err != nil {
+	if c.Status != "deleting" {
+		tx, err := a.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, q := range []string{
+			"UPDATE containers SET status='deleting' WHERE id=?",
+			"UPDATE links SET revoked=1 WHERE container_id=?",
+			"DELETE FROM sessions WHERE link_id IN (SELECT id FROM links WHERE container_id=?)",
+			"UPDATE attempts SET status='canceled',cleanup=1 WHERE link_id IN (SELECT id FROM links WHERE container_id=?) AND status IN ('allocating','uploading','finalizing','abandoned')",
+			"UPDATE files SET status='deleting' WHERE container_id=? AND status!='deleted'",
+		} {
+			if _, err = tx.Exec(q, c.ID); err != nil {
+				return err
+			}
+		}
+		if err = a.auditTx(tx, actor(r), "container.delete", c.ID); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
 			return err
 		}
 	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	if err = a.audit(actor(r), "container.delete", c.ID); err != nil {
-		return err
-	}
-	if err = a.stopInvalidWriters(); err != nil {
-		return err
-	}
 	a.stopDownloads("", c.ID)
-	if err = a.sweepCleanup(); err != nil {
-		return err
+	if err = a.stopInvalidWriters(); err != nil {
+		a.logCleanup(fmt.Errorf("container.delete %s: %w", c.ID, err))
 	}
-	var state string
-	if err = a.db.QueryRow("SELECT status FROM containers WHERE id=?", c.ID).Scan(&state); err != nil {
-		return err
-	}
+	state := a.deletionStatus("SELECT status FROM containers WHERE id=?", c.ID, "container.delete")
 	writeJSON(w, 200, map[string]string{"status": state})
 	return nil
+}
+
+func (a *App) deletionStatus(query, id, action string) string {
+	var state string
+	if err := a.db.QueryRow(query, id).Scan(&state); err != nil {
+		a.logCleanup(fmt.Errorf("%s %s: confirm deletion: %w", action, id, err))
+		return "deleting"
+	}
+	if state == "deleted" {
+		return state
+	}
+	return "deleting"
 }
 
 func (a *App) stopDownloads(file, container string) {

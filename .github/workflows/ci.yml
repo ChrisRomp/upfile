@@ -36,6 +36,8 @@ jobs:
           cache-dependency-path: go.sum
       - name: Install frontend and browser test dependencies
         run: |
+          node --test scripts/check-lockfile-integrity.test.mjs
+          node scripts/check-lockfile-integrity.mjs
           npm ci --prefix web
           npm ci --prefix e2e
       - name: Frontend tests and type-checked build

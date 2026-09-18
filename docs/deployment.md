@@ -40,6 +40,12 @@ or Microsoft feed access:
 docker compose up --build -d
 ```
 
+Lockfile package integrity uses SHA-512. Before dependency installation, CI
+compares the locked versions, tarball URLs, and SHA-512 values with public npm
+metadata using `node scripts/check-lockfile-integrity.mjs`. This read-only check
+runs on GitHub-hosted infrastructure; it does not override local npm registry
+configuration. Preserve those verified hashes when updating locks.
+
 Host `npm` and `make` commands retain the machine's existing npm configuration.
 npm treats the default-registry URLs in these lockfiles as portable and uses
 the configured registry when it differs. Do not replace them with
@@ -268,6 +274,10 @@ seven days); these persist in the database.
   and tus `HEAD`/`PATCH` traffic. Browser challenges in the middle of a chunk
   stream break retries; test rules on `/api/links/*`. Do not broadly disable
   security for the whole zone.
+- Apply anonymous abuse limits at the trusted edge using its observed client IP.
+  The application limits exchanges only after validating the secret, per link;
+  bogus capability requests cannot spend a global allowance and block new
+  uploaders. Application origin-header checks are not an anonymous rate limiter.
 - Chunking avoids single-request size ceilings, not Cloudflare bandwidth/service
   terms, plan constraints, or download timeouts. Review your agreement before
   using this for large file delivery. Test slow chunks and authenticated Range

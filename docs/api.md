@@ -27,8 +27,9 @@ Collection endpoints return `{items: [...], total: number}` and accept `q`, `pag
   active_uploads,active_downloads,link_count}`.
 - `POST /api/containers` with `{name,instructions,max_file_bytes}` → container plus
   `initial_link` (a link object including its one-time-visible `url`). Creates both
-  records atomically. The initial link is labeled `Default link`, inherits the
-  request limit (`max_file_bytes: null`), and expires after `default_link_hours`.
+  records and their audit events atomically. The initial link is labeled
+  `Default link`, inherits the request limit (`max_file_bytes: null`), and expires
+  after `default_link_hours`.
   The UI immediately presents its URL for copying; no second creation step is needed.
   Subsequent reads never return the secret URL. Editing a container does not create a link.
 - `GET /api/containers/:id` → container, plus `effective_max_bytes`.
@@ -59,6 +60,22 @@ are logged and retried; rotation still returns its one-time replacement URL.
 Pending cleanup remains visible in `cleanup_errors`, and reserved bytes stay
 charged until cleanup succeeds.
 
+Container and link creation prepare their complete responses before committing;
+failed audit or response preparation rolls back all new records. Once committed,
+no database reload or unrelated upload cleanup can hide the one-time URL.
+Container/link edits atomically audit the change and cancel affected uploads that
+no longer meet the limits or have invalid credentials; cleanup is retried after commit.
+
+File and container deletion atomically record the audit event with the deletion
+intent; container deletion also revokes its links, removes sessions, and cancels
+unfinished uploads in that transaction. Failed audit leaves the original state,
+uploads, downloads, and stored bytes intact. Only after commit are transfers stopped
+and bytes removed. Cleanup or state-confirmation failures are logged and retried,
+not returned as a failed mutation. The response remains `{status:"deleting"}` until
+deletion is confirmed, then becomes `{status:"deleted"}`. Pending deletion retries
+do not emit duplicate deletion events. Stored and reserved bytes remain charged
+until physical cleanup is confirmed; accepted deletion is never rolled back.
+
 ## Public listener
 
 Uploader page is `/u/:linkID#secret`. Capture and immediately remove the fragment;
@@ -67,6 +84,9 @@ Never persist secrets in localStorage. Do not put filename/comment into tus meta
 
 - `POST /api/links/:id/exchange` with `{secret}` → public link information and
   a Secure HttpOnly link-specific cookie. Reuses a valid existing cookie.
+  After validating the link and secret, exchanges are limited to 120 per minute
+  per link; excess requests return `429` (`rate_limited`). Invalid or unavailable
+  links and incorrect secrets do not consume or create rate-limit buckets.
 - `GET /api/links/:id` → `{id,title,instructions,max_file_bytes,expires_at,
   chunk_bytes,session_expires_at,busy,reset_available}`; requires cookie.
 - `POST /api/links/:id/attempts` with `{key,name,comment,size}` → attempt

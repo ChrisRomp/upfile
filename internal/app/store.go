@@ -70,14 +70,21 @@ func openDB(dir string) (*sql.DB, error) {
 	return db, nil
 }
 
-func (a *App) settings() (s Settings, err error) {
-	err = a.db.QueryRow("SELECT max_file,budget,lifetime FROM settings WHERE id=1").Scan(&s.MaxFileBytes, &s.StorageBudget, &s.DefaultLinkHours)
+type queryer interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}
+
+func (a *App) settings() (Settings, error) { return a.settingsFrom(a.db) }
+
+func (a *App) settingsFrom(q queryer) (s Settings, err error) {
+	err = q.QueryRow("SELECT max_file,budget,lifetime FROM settings WHERE id=1").Scan(&s.MaxFileBytes, &s.StorageBudget, &s.DefaultLinkHours)
 	if err != nil {
 		return
 	}
 	s.Configured = s.MaxFileBytes > 0 && s.StorageBudget > 0
 	s.ChunkBytes, s.LeaseSeconds, s.MaxRecords = a.cfg.ChunkBytes, int64(a.cfg.Lease.Seconds()), a.cfg.MaxRecords
-	err = a.db.QueryRow(`SELECT (SELECT coalesce(sum(size),0) FROM files WHERE status!='deleted'),
+	err = q.QueryRow(`SELECT (SELECT coalesce(sum(size),0) FROM files WHERE status!='deleted'),
 	 (SELECT coalesce(sum(reserved),0) FROM attempts),
 	 (SELECT count(*) FROM attempts)+(SELECT count(*) FROM links)+(SELECT count(*) FROM containers)+(SELECT count(*) FROM sessions),
 	 (SELECT count(*) FROM attempts WHERE cleanup=1)+(SELECT count(*) FROM files WHERE status='deleting')`).Scan(
@@ -85,8 +92,10 @@ func (a *App) settings() (s Settings, err error) {
 	return
 }
 
-func (a *App) container(id string) (c Container, err error) {
-	err = a.db.QueryRow(`SELECT id,name,instructions,max_file,created,status,
+func (a *App) container(id string) (Container, error) { return a.containerFrom(a.db, id) }
+
+func (a *App) containerFrom(q queryer, id string) (c Container, err error) {
+	err = q.QueryRow(`SELECT id,name,instructions,max_file,created,status,
 	 (SELECT count(*) FROM files WHERE container_id=c.id AND status!='deleted'),
 	 (SELECT coalesce(sum(size),0) FROM files WHERE container_id=c.id AND status!='deleted'),
 	 (SELECT count(*) FROM attempts JOIN links ON links.id=attempts.link_id WHERE links.container_id=c.id AND attempts.status IN ('allocating','uploading','finalizing')),
@@ -95,12 +104,12 @@ func (a *App) container(id string) (c Container, err error) {
 	if err != nil {
 		return
 	}
-	s, err := a.settings()
+	s, err := a.settingsFrom(q)
 	if err != nil {
 		return c, err
 	}
 	c.EffectiveMax = effective(s.MaxFileBytes, c.MaxFileBytes)
-	if err = a.db.QueryRow(`SELECT max(?,coalesce((SELECT max(created) FROM files WHERE container_id=?),0),
+	if err = q.QueryRow(`SELECT max(?,coalesce((SELECT max(created) FROM files WHERE container_id=?),0),
 	 coalesce((SELECT max(created) FROM links WHERE container_id=?),0))`, c.CreatedAt, id, id).Scan(&c.LastActivity); err != nil {
 		return c, err
 	}
@@ -112,15 +121,17 @@ func (a *App) container(id string) (c Container, err error) {
 	return c, nil
 }
 
-func (a *App) link(id string) (l Link, err error) {
-	err = a.db.QueryRow(`SELECT id,container_id,sender,expires,max_file,created,hash,revoked,
+func (a *App) link(id string) (Link, error) { return a.linkFrom(a.db, id) }
+
+func (a *App) linkFrom(q queryer, id string) (l Link, err error) {
+	err = q.QueryRow(`SELECT id,container_id,sender,expires,max_file,created,hash,revoked,
 	 (SELECT count(*) FROM files WHERE link_id=l.id AND status!='deleted'),
 	 (SELECT count(*) FROM attempts WHERE link_id=l.id AND status IN ('allocating','uploading','finalizing'))
 	 FROM links l WHERE id=?`, id).Scan(&l.ID, &l.ContainerID, &l.SenderLabel, &l.ExpiresAt, &l.MaxFileBytes, &l.CreatedAt, &l.Hash, &l.Revoked, &l.FileCount, &l.Active)
 	if err != nil {
 		return
 	}
-	c, err := a.container(l.ContainerID)
+	c, err := a.containerFrom(q, l.ContainerID)
 	if err != nil {
 		return l, err
 	}
@@ -161,7 +172,11 @@ func (a *App) file(id string) (v File, err error) {
 }
 
 func (a *App) ids(query string, args ...any) ([]string, error) {
-	rows, err := a.db.Query(query, args...)
+	return idsFrom(a.db, query, args...)
+}
+
+func idsFrom(q queryer, query string, args ...any) ([]string, error) {
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

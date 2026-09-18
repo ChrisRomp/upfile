@@ -89,6 +89,12 @@ uploaded bytes. A malicious link holder or network attacker may still cause
 denial of service despite application limits. Cloudflare/WAF policies must be
 tested without breaking valid chunked requests.
 
+Session exchange is limited to 120 validated requests per link per minute.
+Invalid IDs, invalid secrets, and inactive links do not consume another link's
+allowance. This protects session creation, not the cost of handling anonymous
+traffic: configure anonymous request/IP rate limits at the trusted Cloudflare
+edge. Do not trust arbitrary client-supplied forwarding headers as IP identity.
+
 SQLite metadata and file bytes form one persistent unit. Use one local volume
 and one app replica. Network filesystems, shared-volume replicas and horizontal
 scaling are unsupported. Back up the whole stopped volume, protect archives as

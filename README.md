@@ -151,9 +151,10 @@ local tests alone do not establish deployment readiness.
 
 GitHub Actions runs frontend tests/build, Go formatting/vet/race tests,
 desktop/mobile browser tests, and a production Docker build on pull requests
-targeting `main` and on pushes to `main`. CI uses a fresh local authentication
-fixture without Cloudflare credentials. It does not publish images or deploy
-services.
+targeting `main` and on pushes to `main`. Successful pushes to `main` publish
+`ghcr.io/chrisromp/upfile:main`; pull requests remain build-only. CI uses a
+fresh local authentication fixture without Cloudflare credentials and does not
+deploy services.
 
 ## Important boundaries
 

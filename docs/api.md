@@ -66,6 +66,19 @@ no database reload or unrelated upload cleanup can hide the one-time URL.
 Container/link edits atomically audit the change and cancel affected uploads that
 no longer meet the limits or have invalid credentials; cleanup is retried after commit.
 
+Settings updates atomically persist the limits, their audit event, and cancellation
+of unfinished uploads that no longer meet the effective limits or have invalid
+credentials. The response is prepared in the transaction, including quota and
+pending-cleanup counts before physical cleanup; use `GET /api/settings` for refreshed
+counts. Pre-commit failures leave settings, uploads, and bytes unchanged. After
+commit, writer cancellation and cleanup failures are logged and retried without
+reporting the settings update as failed. Lowering the storage budget blocks new
+admissions when full but does not cancel existing reservations.
+
+File renames atomically persist the filename and audit event. Audit failure leaves
+the filename unchanged; successful renames preserve `original_name` and all other
+file metadata and bytes.
+
 File and container deletion atomically record the audit event with the deletion
 intent; container deletion also revokes its links, removes sessions, and cancels
 unfinished uploads in that transaction. Failed audit leaves the original state,

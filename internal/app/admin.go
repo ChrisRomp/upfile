@@ -31,16 +31,38 @@ func (a *App) putSettings(w http.ResponseWriter, r *http.Request) error {
 	if v.Max <= 0 || v.Max > MaxSafeInteger || v.Budget <= 0 || v.Budget > MaxSafeInteger || v.Lifetime < 1 || v.Lifetime > 87600 {
 		return invalid("Set positive byte limits and a link lifetime between 1 hour and 10 years.")
 	}
-	if _, err := a.db.Exec("UPDATE settings SET max_file=?,budget=?,lifetime=? WHERE id=1", v.Max, v.Budget, v.Lifetime); err != nil {
+	tx, err := a.db.Begin()
+	if err != nil {
 		return err
 	}
-	if err := a.audit(actor(r), "settings.update", "settings"); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE settings SET max_file=?,budget=?,lifetime=? WHERE id=1", v.Max, v.Budget, v.Lifetime); err != nil {
 		return err
 	}
-	if err := a.invalidateOversize(); err != nil {
+	if err = a.auditTx(tx, actor(r), "settings.update", "settings"); err != nil {
 		return err
 	}
-	return a.getSettings(w, r)
+	ids, err := idsFrom(tx, "SELECT DISTINCT link_id FROM attempts WHERE status IN ('allocating','uploading','finalizing')")
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = a.invalidateEditedLinkTx(tx, id); err != nil {
+			return err
+		}
+	}
+	s, err := a.settingsFrom(tx)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if err = a.stopInvalidWriters(); err != nil {
+		a.logCleanup(fmt.Errorf("settings.update: %w", err))
+	}
+	writeJSON(w, 200, s)
+	return nil
 }
 
 func (a *App) capacity() error {
@@ -434,10 +456,18 @@ func (a *App) renameFile(w http.ResponseWriter, r *http.Request) error {
 	if f.Status != "ready" {
 		return problem(409, "deleting", "This file is being deleted.")
 	}
-	if _, err = a.db.Exec("UPDATE files SET name=? WHERE id=?", v.Name, f.ID); err != nil {
+	tx, err := a.db.Begin()
+	if err != nil {
 		return err
 	}
-	if err = a.audit(actor(r), "file.rename", f.ID); err != nil {
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE files SET name=? WHERE id=?", v.Name, f.ID); err != nil {
+		return err
+	}
+	if err = a.auditTx(tx, actor(r), "file.rename", f.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
 		return err
 	}
 	f.Name = v.Name

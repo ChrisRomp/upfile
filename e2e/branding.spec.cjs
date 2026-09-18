@@ -54,7 +54,7 @@ test('public missing-session and not-found surfaces have non-link branding', asy
   await page.goto(`${origin('public')}/u/${id}`);
   await expect(page.getByRole('alert')).toBeVisible();
   await expectStaticBrand(page);
-  await page.goto(`${origin('public')}/not-an-upload`);
+  await page.goto(`${origin('public')}/u/not-an-upload`);
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await expectStaticBrand(page);
 });

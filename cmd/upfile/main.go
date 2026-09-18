@@ -35,6 +35,16 @@ func integer(name string, fallback int64) (int64, error) {
 	}
 	return fallback, nil
 }
+func nativeInteger(name string, fallback int) (int, error) {
+	if v := os.Getenv(name); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer", name)
+		}
+		return n, nil
+	}
+	return fallback, nil
+}
 func run() error {
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
 		client := &http.Client{Timeout: 3 * time.Second}
@@ -61,15 +71,15 @@ func run() error {
 		}
 		*p = v
 	}
-	maxRecords, err := integer("UPFILE_MAX_RECORDS", 100000)
+	maxRecords, err := nativeInteger("UPFILE_MAX_RECORDS", 100000)
 	if err != nil {
 		return err
 	}
-	maxActive, err := integer("UPFILE_MAX_ACTIVE", 8)
+	maxActive, err := nativeInteger("UPFILE_MAX_ACTIVE", 8)
 	if err != nil {
 		return err
 	}
-	c.MaxRecords, c.MaxActive = int(maxRecords), int(maxActive)
+	c.MaxRecords, c.MaxActive = maxRecords, maxActive
 	for name, p := range map[string]*time.Duration{"UPFILE_LEASE_SECONDS": &c.Lease, "UPFILE_SESSION_SECONDS": &c.SessionTTL, "UPFILE_RETENTION_SECONDS": &c.Retention} {
 		v, e := integer(name, 0)
 		if e != nil {

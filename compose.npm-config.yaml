@@ -1,0 +1,9 @@
+services:
+  app:
+    build:
+      secrets:
+        - npmrc
+
+secrets:
+  npmrc:
+    file: ${UPFILE_NPM_CONFIG_FILE:-${HOME}/.npmrc}

@@ -1,0 +1,85 @@
+name: upfile
+
+services:
+  app:
+    image: upfile:local
+    build:
+      context: .
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
+    stop_grace_period: 2m
+    environment:
+      UPFILE_DATA_DIR: /data
+      UPFILE_PUBLIC_ADDR: ":8080"
+      UPFILE_ADMIN_ADDR: ":8081"
+      UPFILE_PUBLIC_ORIGIN: ${UPFILE_PUBLIC_ORIGIN:?Set the exact public HTTPS origin in .env}
+      UPFILE_ADMIN_ORIGIN: ${UPFILE_ADMIN_ORIGIN:?Set the exact admin HTTPS origin in .env}
+      UPFILE_AUTH_ISSUER: ${UPFILE_AUTH_ISSUER:?Set the Cloudflare Access team issuer in .env}
+      UPFILE_AUTH_AUDIENCE: ${UPFILE_AUTH_AUDIENCE:?Set the admin Access application audience in .env}
+      UPFILE_CHUNK_BYTES: ${UPFILE_CHUNK_BYTES:-16777216}
+      UPFILE_MAX_ACTIVE: ${UPFILE_MAX_ACTIVE:-8}
+      UPFILE_MAX_RECORDS: ${UPFILE_MAX_RECORDS:-100000}
+      UPFILE_HEADROOM_BYTES: ${UPFILE_HEADROOM_BYTES:-268435456}
+      UPFILE_LEASE_SECONDS: ${UPFILE_LEASE_SECONDS:-300}
+      UPFILE_SESSION_SECONDS: ${UPFILE_SESSION_SECONDS:-86400}
+      UPFILE_RETENTION_SECONDS: ${UPFILE_RETENTION_SECONDS:-86400}
+      GOMEMLIMIT: 384MiB
+    volumes:
+      - upfile-data:/data
+    tmpfs:
+      - /run/upfile:rw,noexec,nosuid,nodev,size=67108864,mode=0700,uid=65532,gid=65532
+    healthcheck:
+      test: ["CMD", "/upfile", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks: [tunnel]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.9.1
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel-token"]
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 64
+    stop_grace_period: 30s
+    depends_on:
+      app:
+        condition: service_healthy
+    secrets:
+      - source: tunnel-token
+        target: tunnel-token
+    networks: [tunnel]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # Egress is needed for the tunnel and the app's HTTPS Access certificate fetch.
+  tunnel:
+    driver: bridge
+
+volumes:
+  upfile-data:
+
+secrets:
+  tunnel-token:
+    file: ${UPFILE_TUNNEL_TOKEN_FILE:-./deploy/tunnel-token}

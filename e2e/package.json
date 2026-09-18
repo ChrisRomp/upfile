@@ -1,0 +1,11 @@
+{
+  "name": "upfile-browser-tests",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "scripts": {
+    "test": "playwright test --config=playwright.config.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0"
+  }
+}

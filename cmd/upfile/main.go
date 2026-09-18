@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -102,17 +103,30 @@ func run() error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if e := public.Shutdown(shutdown); e != nil {
-		_ = public.Close()
-	}
-	if e := admin.Shutdown(shutdown); e != nil {
-		_ = admin.Close()
-	}
+	shutdownServers(shutdown, public, admin)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
 }
+
+func shutdownServers(ctx context.Context, servers ...*http.Server) {
+	var wg sync.WaitGroup
+	for _, server := range servers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := server.Shutdown(ctx); err != nil {
+				slog.Warn("forcing listener shutdown", "address", server.Addr, "error", err)
+				if err := server.Close(); err != nil {
+					slog.Error("force-close listener failed", "address", server.Addr, "error", err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("upfile stopped", "error", err)

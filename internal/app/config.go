@@ -31,7 +31,7 @@ func (c *Config) defaults() error {
 	}
 	for _, origin := range []string{c.PublicOrigin, c.AdminOrigin} {
 		if !exactHTTPSOrigin(origin) {
-			return errors.New("public and admin origins must be canonical HTTPS origins without paths, queries, fragments, or the default :443 port")
+			return errors.New("public and admin origins must be canonical HTTPS origins without paths, queries, fragments, port :0, or the default :443 port")
 		}
 	}
 	if c.PublicOrigin == c.AdminOrigin {
@@ -106,7 +106,7 @@ func exactHTTPSOrigin(origin string) bool {
 	}
 	if port := u.Port(); port != "" {
 		n, err := strconv.ParseUint(port, 10, 16)
-		if err != nil || n == 443 {
+		if err != nil || n == 0 || n == 443 {
 			return false
 		}
 		canonicalHost += ":" + strconv.FormatUint(n, 10)

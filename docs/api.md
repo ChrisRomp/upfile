@@ -87,8 +87,9 @@ Use tus-js-client with `uploadUrl` from admission, `chunkSize` from link info,
 `headers: {'X-Upfile-Request':'1'}`, `withCredentials:true`,
 `storeFingerprintForResuming:false`, no endpoint/metadata/parallel uploads.
 Guard `onShouldRetry`: retry network/408/429/5xx and offset conflicts with bounded
-backoff; never retry authorization, revoked/expired, lost-resource, size, or quota
-errors. A client fallback to POST cannot allocate an upload. After tus success,
+backoff for up to three consecutive retries; successful upload progress resets
+the tus retry budget. Never retry authorization, revoked/expired, lost-resource,
+size, or quota errors. A client fallback to POST cannot allocate an upload. After tus success,
 fetch the attempt receipt; only `completed` is success.
 
 Initial UI queue is serial. Every file has a comment field (2048 UTF-8 bytes),

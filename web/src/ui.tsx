@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { errorMessage } from './api';
 import { BRAND } from './format';
 
-export function Brand({ children }: { children?: ReactNode }) {
-  return <header className="site-header"><a className="brand" href="/">{BRAND}<span aria-hidden="true">↥</span></a>{children}</header>;
+export function Brand({ children, href }: { children?: ReactNode; href?: string }) {
+  const name = <>{BRAND}<span aria-hidden="true">↥</span></>;
+  return <header className="site-header">{href ? <a className="brand" href={href}>{name}</a> : <span className="brand">{name}</span>}{children}</header>;
 }
 export function Notice({ children, error = false }: { children?: ReactNode; error?: boolean }) {
   return children ? <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{children}</div> : null;

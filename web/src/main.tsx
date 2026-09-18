@@ -30,7 +30,7 @@ function App() {
   const id = /^\/u\/([a-f0-9]+)\/?$/.exec(window.location.pathname)?.[1];
   if (surface === 'public' && id) return <Public id={id} />;
   if (surface === 'admin' && !window.location.pathname.startsWith('/u/')) return <Admin />;
-  if (surface) return <><Brand /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened on the public upload address.'}</p></Empty></main></>;
+  if (surface) return <><Brand href={surface === 'admin' ? '/' : undefined} /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened on the public upload address.'}</p></Empty></main></>;
   return <><Brand /><main className="public-main"><Notice error>{error}</Notice>{error ? <button onClick={() => setVersion((value) => value + 1)}>Retry</button> : <Empty>Opening upfile…</Empty>}</main></>;
 }
 

@@ -42,6 +42,32 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('serial upload queue', () => {
+  it('reports the configured retry budget and follows tus counter resets after progress', async () => {
+    const { DetailedError } = await vi.importActual<typeof import('tus-js-client')>('tus-js-client');
+    const interrupted = new DetailedError('Connection interrupted');
+    tus.hold = true;
+    vi.stubGlobal('fetch', vi.fn(async (path: string) =>
+      response(receipt('b1', path.endsWith('/attempts') ? 'uploading' : 'completed'))));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const run = queue.start();
+    await vi.waitFor(() => expect(tus.options).toHaveLength(1));
+    const options = tus.options[0];
+    expect(options.retryDelays).toEqual([600, 1500, 3500]);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(options.onShouldRetry?.(interrupted, attempt, options)).toBe(true);
+      expect(queue.snapshot().items[0].message).toContain(`retry ${attempt + 1}/3`);
+    }
+    expect(options.onShouldRetry?.(interrupted, 3, options)).toBe(false);
+    expect(queue.snapshot().items[0].message).toContain('retry 3/3');
+    options.onChunkComplete?.(1, 1, 5);
+    expect(queue.snapshot().items[0].message).toBe('Uploading…');
+    expect(options.onShouldRetry?.(interrupted, 0, options)).toBe(true);
+    expect(queue.snapshot().items[0].message).toContain('retry 1/3');
+    options.onSuccess?.({ lastResponse: {} as never });
+    await run;
+    expect(queue.snapshot().items[0].status).toBe('completed');
+  });
   it('admits one file at a time and verifies receipts before declaring completion', async () => {
     let admissions = 0;
     const fetch = vi.fn(async (path: string) => {

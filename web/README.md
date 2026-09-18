@@ -17,10 +17,13 @@ listeners. Serve `/bootstrap.js` unchanged as JavaScript: it must run synchronou
 before the application module, capturing the fragment in memory and immediately
 removing it from the address. The built page requires no inline-script CSP exception.
 
-The server should return `index.html` for app routes, without redirecting them:
-`/`, `/containers/:id`, `/settings`, `/audit`, and `/u/:linkID`. API routes must not
-fall back to the HTML page. `GET /api/surface` selects the authorized listener
-surface; public listeners never initialize administrator data requests.
+The admin listener returns `index.html` for `/`, `/containers/:id`, `/settings`,
+and `/audit`; the public listener serves the app under `/u/:linkID`, not `/`.
+API routes must not fall back to HTML. `GET /api/surface` selects the authorized
+listener surface; public listeners never initialize administrator data requests.
+Branding links home only on a known admin surface. It is non-interactive on
+public, loading, and unknown/error surfaces so it cannot discard an upload queue
+or navigate to an unavailable public root.
 
 ## API integration
 
@@ -33,8 +36,10 @@ The tus client is pinned to 4.3.1. It receives only an admitted upload URL, with
 no creation endpoint or metadata. An additional method/URL guard permits only
 HEAD and PATCH on that exact same-origin resource. Because this client version
 does not apply a top-level `withCredentials` option itself, the request hook also
-sets `XMLHttpRequest.withCredentials = true`. Retries are bounded, retain the same
-admission key, and never allocate through tus POST. Cancellation awaits
+sets `XMLHttpRequest.withCredentials = true`. Transfers allow three consecutive
+retries, with the displayed count taken from tus and its configured delay array.
+Successful upload progress resets that retry budget. Retries retain the same
+admission key and never allocate through tus POST. Cancellation awaits
 `abort(false)`, then uses the application cancellation API and checks its receipt.
 
 The UI confirms success only after a completed receipt (including an already

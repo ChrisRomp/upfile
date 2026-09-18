@@ -246,14 +246,14 @@ export class UploadQueue {
     }
     this.patch(item.id, { status: 'uploading', sent: attempt.offset, message: 'Uploading…' });
     return new Promise<void>((resolve, reject) => {
-      let retryCount = 0;
+      const retryDelays = [600, 1500, 3500];
       const options: UploadOptions & { withCredentials: true } = {
         uploadUrl: url.href,
         chunkSize: this.link.chunk_bytes,
         withCredentials: true,
         headers: { 'X-Upfile-Request': '1' },
         storeFingerprintForResuming: false,
-        retryDelays: [600, 1500, 3500],
+        retryDelays,
         onBeforeRequest: (request) => {
           if (control.canceled) throw new CancelRequested();
           if (!['HEAD', 'PATCH'].includes(request.getMethod()) || request.getURL() !== url.href) {
@@ -263,10 +263,9 @@ export class UploadQueue {
           xhr.withCredentials = true;
           xhr.timeout = 60_000;
         },
-        onShouldRetry: (error) => {
-          if (control.canceled || retryCount >= 5 || !shouldRetryTus(error)) return false;
-          retryCount++;
-          this.patch(item.id, { message: `Connection interrupted · retry ${retryCount}/5…` });
+        onShouldRetry: (error, retryAttempt) => {
+          if (control.canceled || retryAttempt >= retryDelays.length || !shouldRetryTus(error)) return false;
+          this.patch(item.id, { message: `Connection interrupted · retry ${retryAttempt + 1}/${retryDelays.length}…` });
           return true;
         },
         onProgress: (sent) => this.patch(item.id, { sent: Math.min(sent, item.file.size) }),

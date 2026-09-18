@@ -24,6 +24,8 @@ describe('real tus-js-client against an existing HTTP resource', () => {
   let requests: ObservedRequest[];
   let headStatus: number;
   let losePatchResponse: boolean;
+  let losePatchOffsets: Set<number>;
+  let retryAttempts: number[];
   let lostResponseAtOffset: number | undefined;
   let conflictOnce: boolean;
   let errors: string[];
@@ -35,6 +37,8 @@ describe('real tus-js-client against an existing HTTP resource', () => {
     errors = [];
     headStatus = 200;
     losePatchResponse = false;
+    losePatchOffsets = new Set();
+    retryAttempts = [];
     lostResponseAtOffset = undefined;
     conflictOnce = false;
     server = createServer((request, response) => {
@@ -77,7 +81,7 @@ describe('real tus-js-client against an existing HTTP resource', () => {
           return;
         }
         stored = Buffer.concat([stored, body]);
-        if (losePatchResponse) {
+        if (losePatchResponse || losePatchOffsets.delete(stored.length)) {
           losePatchResponse = false;
           lostResponseAtOffset = stored.length;
           request.socket.destroy();
@@ -110,7 +114,10 @@ describe('real tus-js-client against an existing HTTP resource', () => {
         storeFingerprintForResuming: false,
         headers: { 'X-Upfile-Request': '1' },
         retryDelays: [0, 1, 2],
-        onShouldRetry: shouldRetryTus,
+        onShouldRetry: (error, attempt) => {
+          retryAttempts.push(attempt);
+          return shouldRetryTus(error);
+        },
         onSuccess: () => resolve(),
         onError: reject,
       });
@@ -198,7 +205,17 @@ describe('real tus-js-client against an existing HTTP resource', () => {
     headStatus = 503;
     await expect(upload()).rejects.toHaveProperty('originalResponse');
     expect(requests.map((request) => request.method)).toEqual(['HEAD', 'HEAD', 'HEAD', 'HEAD']);
+    expect(retryAttempts).toEqual([0, 1, 2]);
     expect(stored.length).toBe(0);
+    verifyRequests();
+  });
+
+  it('resets the retry counter after successful upload progress', async () => {
+    losePatchOffsets.add(8);
+    losePatchOffsets.add(16);
+    await upload();
+    expect(retryAttempts).toEqual([0, 0]);
+    expect(stored).toEqual(payload);
     verifyRequests();
   });
 });

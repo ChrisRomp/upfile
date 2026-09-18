@@ -42,7 +42,7 @@ export default function Admin() {
   const containerID = /^\/containers\/([a-f0-9]+)$/.exec(path)?.[1];
   const firstRun = settings.data && !settings.data.configured;
   const tab = firstRun || path === '/settings' ? 'settings' : path === '/audit' ? 'audit' : 'containers';
-  return <><Brand><nav className="main-nav" aria-label="Main navigation">
+  return <><Brand href="/"><nav className="main-nav" aria-label="Main navigation">
     <a href="/" aria-current={tab === 'containers' ? 'page' : undefined}>Requests</a>
     <a href="/settings" aria-current={tab === 'settings' ? 'page' : undefined}>Settings</a>
     <a href="/audit" aria-current={tab === 'audit' ? 'page' : undefined}>Activity</a>

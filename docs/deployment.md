@@ -15,6 +15,15 @@ containers drop all capabilities, forbid privilege escalation, use read-only
 root filesystems, and have memory/PID limits. The app gets a writable `/data`
 volume and a bounded, non-executable scratch mount at `/run/upfile`.
 
+Every push to `main` that passes CI publishes the production image to GitHub
+Container Registry as `ghcr.io/chrisromp/upfile:main`. To use the published
+image instead of building locally, authenticate to GHCR as needed and pull it
+with:
+
+```sh
+docker pull ghcr.io/chrisromp/upfile:main
+```
+
 The dedicated bridge has no published host ports. It is deliberately **not**
 marked `internal: true`, because both containers need outbound connectivity:
 

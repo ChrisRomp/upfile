@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -77,6 +78,7 @@ jobs:
 
   container:
     name: Docker build
+    needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -84,10 +86,26 @@ jobs:
         with:
           persist-credentials: false
       - name: Build production image
-        run: docker build --tag upfile:ci .
+        env:
+          IMAGE_NAME: ghcr.io/chrisromp/upfile
+        run: |
+          docker build \
+            --tag upfile:ci \
+            --tag "$IMAGE_NAME:main" \
+            .
       - name: Require production authentication configuration
         run: |
           if docker run --rm upfile:ci; then
             echo "Production must refuse to start without authentication configuration."
             exit 1
           fi
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Publish main image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE_NAME: ghcr.io/chrisromp/upfile
+        run: docker push "$IMAGE_NAME:main"

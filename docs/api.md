@@ -15,6 +15,9 @@ overrides still inherit the parent maximum.
 IDs are opaque lowercase hex. Nullable size overrides are `null` to inherit.
 Collection endpoints return `{items: [...], total: number}` and accept `q`, `page`
 (one-based), and `limit` (1–100, default 25).
+Container and link lists reuse the current global maximum within the request;
+row hydration does not calculate global storage usage. Aggregate storage and
+reservation counts are provided separately by `GET /api/settings`.
 
 ## Administrator listener
 

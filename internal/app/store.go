@@ -94,7 +94,21 @@ func (a *App) settingsFrom(q queryer) (s Settings, err error) {
 
 func (a *App) container(id string) (Container, error) { return a.containerFrom(a.db, id) }
 
-func (a *App) containerFrom(q queryer, id string) (c Container, err error) {
+func globalMaxFrom(q queryer) (int64, error) {
+	var max int64
+	err := q.QueryRow("SELECT max_file FROM settings WHERE id=1").Scan(&max)
+	return max, err
+}
+
+func (a *App) containerFrom(q queryer, id string) (Container, error) {
+	max, err := globalMaxFrom(q)
+	if err != nil {
+		return Container{}, err
+	}
+	return a.containerWithMaxFrom(q, id, max)
+}
+
+func (a *App) containerWithMaxFrom(q queryer, id string, max int64) (c Container, err error) {
 	err = q.QueryRow(`SELECT id,name,instructions,max_file,created,status,
 	 (SELECT count(*) FROM files WHERE container_id=c.id AND status!='deleted'),
 	 (SELECT coalesce(sum(size),0) FROM files WHERE container_id=c.id AND status!='deleted'),
@@ -104,11 +118,7 @@ func (a *App) containerFrom(q queryer, id string) (c Container, err error) {
 	if err != nil {
 		return
 	}
-	s, err := a.settingsFrom(q)
-	if err != nil {
-		return c, err
-	}
-	c.EffectiveMax = effective(s.MaxFileBytes, c.MaxFileBytes)
+	c.EffectiveMax = effective(max, c.MaxFileBytes)
 	if err = q.QueryRow(`SELECT max(?,coalesce((SELECT max(created) FROM files WHERE container_id=?),0),
 	 coalesce((SELECT max(created) FROM links WHERE container_id=?),0))`, c.CreatedAt, id, id).Scan(&c.LastActivity); err != nil {
 		return c, err
@@ -123,18 +133,27 @@ func (a *App) containerFrom(q queryer, id string) (c Container, err error) {
 
 func (a *App) link(id string) (Link, error) { return a.linkFrom(a.db, id) }
 
-func (a *App) linkFrom(q queryer, id string) (l Link, err error) {
+func (a *App) linkFrom(q queryer, id string) (Link, error) {
+	l, err := linkRecordFrom(q, id)
+	if err != nil {
+		return Link{}, err
+	}
+	c, err := a.containerFrom(q, l.ContainerID)
+	if err != nil {
+		return Link{}, err
+	}
+	return a.linkWithContainer(l, c), nil
+}
+
+func linkRecordFrom(q queryer, id string) (l Link, err error) {
 	err = q.QueryRow(`SELECT id,container_id,sender,expires,max_file,created,hash,revoked,
 	 (SELECT count(*) FROM files WHERE link_id=l.id AND status!='deleted'),
 	 (SELECT count(*) FROM attempts WHERE link_id=l.id AND status IN ('allocating','uploading','finalizing'))
 	 FROM links l WHERE id=?`, id).Scan(&l.ID, &l.ContainerID, &l.SenderLabel, &l.ExpiresAt, &l.MaxFileBytes, &l.CreatedAt, &l.Hash, &l.Revoked, &l.FileCount, &l.Active)
-	if err != nil {
-		return
-	}
-	c, err := a.containerFrom(q, l.ContainerID)
-	if err != nil {
-		return l, err
-	}
+	return
+}
+
+func (a *App) linkWithContainer(l Link, c Container) Link {
 	l.EffectiveMax = effective(c.EffectiveMax, l.MaxFileBytes)
 	l.Status = "active"
 	if l.ExpiresAt <= a.now().Unix() {
@@ -143,7 +162,7 @@ func (a *App) linkFrom(q queryer, id string) (l Link, err error) {
 	if l.Revoked || c.Status != "active" {
 		l.Status = "revoked"
 	}
-	return l, nil
+	return l
 }
 
 func (a *App) attempt(id string) (v Attempt, err error) {

@@ -88,6 +88,10 @@ func (a *App) listContainers(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	max, err := globalMaxFrom(a.db)
+	if err != nil {
+		return err
+	}
 	q := "%" + r.URL.Query().Get("q") + "%"
 	var total int
 	if err = a.db.QueryRow("SELECT count(*) FROM containers WHERE status!='deleted' AND name LIKE ?", q).Scan(&total); err != nil {
@@ -101,7 +105,7 @@ func (a *App) listContainers(w http.ResponseWriter, r *http.Request) error {
 	}
 	items := []Container{}
 	for _, id := range ids {
-		v, err := a.container(id)
+		v, err := a.containerWithMaxFrom(a.db, id, max)
 		if err != nil {
 			return err
 		}
@@ -236,11 +240,11 @@ func (a *App) listLinks(w http.ResponseWriter, r *http.Request) error {
 	}
 	items := []Link{}
 	for _, id := range ids {
-		l, err := a.link(id)
+		l, err := linkRecordFrom(a.db, id)
 		if err != nil {
 			return err
 		}
-		items = append(items, l)
+		items = append(items, a.linkWithContainer(l, c))
 	}
 	collection(w, items, total)
 	return nil

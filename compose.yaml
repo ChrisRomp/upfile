@@ -5,8 +5,6 @@ services:
     image: upfile:local
     build:
       context: .
-      secrets:
-        - npmrc
     restart: unless-stopped
     user: "65532:65532"
     read_only: true
@@ -83,7 +81,5 @@ volumes:
   upfile-data:
 
 secrets:
-  npmrc:
-    file: ${UPFILE_NPM_CONFIG_FILE:-${HOME}/.npmrc}
   tunnel-token:
     file: ${UPFILE_TUNNEL_TOKEN_FILE:-./deploy/tunnel-token}

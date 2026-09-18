@@ -32,42 +32,56 @@ other users with Docker administration rights.
 
 ### Build networking
 
-Use the machine's approved npm registry/proxy configuration. A registry mirror
-configured by `registry=...` is not necessarily an HTTP transport proxy; do not
-invent `proxy` or `https-proxy` settings when the machine uses a registry mirror.
-Host `make` commands use npm's existing configuration. Docker does not inherit
-that userconfig automatically.
+The committed lockfiles use canonical `registry.npmjs.org` tarball URLs. Default
+Compose builds and CI use public npm without a private npm configuration file
+or Microsoft feed access:
 
-Compose passes `${HOME}/.npmrc` as the build-only `npmrc` secret, mounted at
-`/root/.npmrc` during `npm ci`. Set `UPFILE_NPM_CONFIG_FILE` to a different
-private userconfig path if needed. Keep it **outside the repository**, with
-restrictive permissions such as `0600`. Do not put its contents or credentials
-in `.env`, Dockerfile `ARG`/`ENV`, checked-in files, or command-line URLs.
+```sh
+docker compose up --build -d
+```
 
-The Dockerfile secret is optional for portability, but **must be supplied** on
-a host that requires its configured registry/proxy. Compose expects the selected
-file to exist. On a host with no custom npm configuration, an empty private file
-can be supplied to Compose. Do not use an empty file or omit the secret to bypass
-your machine's required package source.
+Host `npm` and `make` commands retain the machine's existing npm configuration.
+npm treats the default-registry URLs in these lockfiles as portable and uses
+the configured registry when it differs. Do not replace them with
+machine-specific mirror URLs when updating dependencies.
+
+Docker does not inherit the host's npm userconfig. On a machine that requires
+a registry/proxy, opt in to the additional Compose file and pass the existing
+userconfig as a build-only secret:
+
+```sh
+UPFILE_NPM_CONFIG_FILE="$(npm config get userconfig)" \
+  docker compose -f compose.yaml -f compose.npm-config.yaml config --quiet
+UPFILE_NPM_CONFIG_FILE="$(npm config get userconfig)" \
+  docker compose -f compose.yaml -f compose.npm-config.yaml up --build -d
+```
+
+The override defaults to `${HOME}/.npmrc` if `UPFILE_NPM_CONFIG_FILE` is unset;
+the selected file must exist. Keep it **outside the repository**, with
+restrictive permissions such as `0600`. The variable contains a **path only**,
+never secret contents. Do not put credentials in `.env`, Dockerfile `ARG`/`ENV`,
+checked-in files, or command-line URLs. Do not omit this override or use an empty
+file to bypass a machine's required package source.
+
+A registry mirror configured by `registry=...` is not necessarily an HTTP
+transport proxy; do not invent `proxy` or `https-proxy` settings for it. Preserve
+TLS verification and arrange any required corporate CA trust instead of setting
+`strict-ssl=false`.
 
 The config is mounted only for the install step; npm's cache/log directory is
 temporary memory-backed storage. Neither is copied into an image layer, and
-neither runtime service receives the build secret. Ensure package-lock resolved
-URLs use the approved registry or its advertised tarball backend, rather than
-stale URLs that bypass it. Preserve TLS verification and arrange any required
-corporate CA trust instead of setting `strict-ssl=false`.
+neither runtime service receives the build secret.
 
 For a direct Docker build, explicitly provide the same userconfig:
 
 ```sh
-docker build --secret "id=npmrc,src=${UPFILE_NPM_CONFIG_FILE:-$HOME/.npmrc}" -t upfile:local .
+docker build --secret "id=npmrc,src=$(npm config get userconfig)" -t upfile:local .
 ```
 
-Keep this environment variable as a **path only**, never secret contents. A
-secret's contents do not invalidate the Docker build cache; after changing proxy
-configuration, use `docker compose build --no-cache app` when a fresh install
-must be verified. Image pulls and Go module downloads use their own host/build
-network configuration; the npm secret does not configure them.
+A secret's contents do not invalidate the Docker build cache. After changing
+proxy configuration, add `--no-cache` to the proxy-aware build command when a
+fresh install must be verified. Image pulls and Go module downloads use their
+own host/build network configuration; the npm secret does not configure them.
 
 ## 2. Configure Cloudflare Access before publishing admin routes
 
@@ -229,7 +243,7 @@ against your Docker configuration.
 | `UPFILE_LEASE_SECONDS` | `300` | Upload activity lease |
 | `UPFILE_SESSION_SECONDS` | `86400` | Maximum uploader session lifetime |
 | `UPFILE_RETENTION_SECONDS` | `86400` | Inactivity before abandoned partial-upload cleanup; **not completed-file expiry** |
-| `UPFILE_NPM_CONFIG_FILE` | `${HOME}/.npmrc` | Private npm userconfig path, mounted only during image build |
+| `UPFILE_NPM_CONFIG_FILE` | `${HOME}/.npmrc` | Used only with `compose.npm-config.yaml`: private npm userconfig path for the build secret |
 | `UPFILE_TUNNEL_TOKEN_FILE` | `./deploy/tunnel-token` | Compose-only host secret path |
 
 Compose fixes the data path and listener addresses to match its volume and

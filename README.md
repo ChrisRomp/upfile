@@ -21,9 +21,10 @@ This repository does not create Cloudflare resources.
    route returning 404. Protect **every admin path**, including APIs and downloads,
    with an Access allow policy for approved account members and enforced MFA.
 2. Copy `.env.example` to `.env`; set both exact HTTPS origins, the Access team
-   issuer, and the admin application's audience. Set `UPFILE_NPM_CONFIG_FILE`
-   to your private npm userconfig if it is not at the default `~/.npmrc`,
-   as described in [build networking](docs/deployment.md#build-networking).
+   issuer, and the admin application's audience. Builds use public npm by
+   default and need no npm configuration file. If your machine requires a
+   registry/proxy, use the optional Compose override described in
+   [build networking](docs/deployment.md#build-networking).
 3. Put the tunnel token in ignored `deploy/tunnel-token`, with the directory and
    file permissions described in the deployment guide. Do not put it in `.env`,
    shell arguments, source control, or an image.

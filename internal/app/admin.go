@@ -516,11 +516,13 @@ func (a *App) listAudit(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	q := "%" + r.URL.Query().Get("q") + "%"
+	const filter = " WHERE actor LIKE ? OR action LIKE ? OR target LIKE ?"
 	var total int
-	if err = a.db.QueryRow("SELECT count(*) FROM audit").Scan(&total); err != nil {
+	if err = a.db.QueryRow("SELECT count(*) FROM audit"+filter, q, q, q).Scan(&total); err != nil {
 		return err
 	}
-	rows, err := a.db.Query("SELECT id,actor,action,target,created FROM audit ORDER BY id DESC LIMIT ? OFFSET ?", limit, off)
+	rows, err := a.db.Query("SELECT id,actor,action,target,created FROM audit"+filter+" ORDER BY id DESC LIMIT ? OFFSET ?", q, q, q, limit, off)
 	if err != nil {
 		return err
 	}

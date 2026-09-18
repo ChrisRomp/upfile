@@ -60,6 +60,7 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
   const total = state.items.reduce((sum, item) => sum + item.file.size, 0);
   const sent = state.items.reduce((sum, item) => sum + item.sent, 0);
   const completed = state.items.filter((item) => item.status === 'completed').length;
+  const progress = total ? sent : state.items.length > 0 && completed === state.items.length ? 1 : 0;
   const failed = state.items.filter((item) => item.status === 'failed').length;
   const canceled = state.items.filter((item) => item.status === 'canceled').length;
   const queued = state.items.filter((item) => item.status === 'queued');
@@ -103,9 +104,9 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
     </section>
     <Notice error>{error}</Notice>
     {expired && <Notice error>This link or upload session has expired. Reopen the original shared link; ask its sender for a new link if it has expired.</Notice>}
-    {link.busy && !state.running && <Notice>
-      <strong>{link.reset_available ? 'An unfinished upload is blocking this link.' : 'This link has an active upload.'}</strong>
-      <p>{link.reset_available ? 'You can discard the stale partial upload and start again. Completed files are kept.' : 'Wait for the other transfer to finish. If it was interrupted, a reset becomes available after its activity lease expires.'}</p>
+    {(link.busy || link.reset_available) && !state.running && <Notice>
+      <strong>{link.reset_available ? link.busy ? 'An unfinished upload is blocking this link.' : 'An abandoned upload is available to clean up.' : 'This link has an active upload.'}</strong>
+      <p>{link.reset_available ? link.busy ? 'You can discard the stale partial upload and start again. Completed files are kept.' : 'You can send new files or discard the abandoned partial upload to free its reserved space. Completed files are kept.' : 'Wait for the other transfer to finish. If it was interrupted, a reset becomes available after its activity lease expires.'}</p>
       {hasResumable && <p>You have an unfinished attempt on this page. Retry the same upload to recover its receipt or resume it before resetting.</p>}
       <div className="actions"><button onClick={check} disabled={checking}>Check status</button>
         {link.reset_available && <button onClick={() => setConfirmReset(true)}>Reset unfinished upload</button>}</div>
@@ -156,8 +157,8 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
         })}
       </ul>
       {!!state.items.length && <div className="queue-summary">
-        <div className="section-heading"><strong>Overall progress</strong><span>{total ? Math.floor(sent / total * 100) : completed === state.items.length ? 100 : 0}%</span></div>
-        <progress aria-label="Overall byte progress" max={total || 1} value={sent} />
+        <div className="section-heading"><strong>Overall progress</strong><span>{Math.floor(progress / (total || 1) * 100)}%</span></div>
+        <progress aria-label="Overall byte progress" max={total || 1} value={progress} />
         <div className="summary-counts" aria-live="polite" aria-atomic="true">{completed} received · {failed} failed · {canceled} canceled · {queued.length} waiting</div>
         <p className="small muted">{bytes(sent)} / {bytes(total)} transferred. Only “completed” means the server confirmed receipt.</p>
       </div>}

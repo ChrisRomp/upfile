@@ -2,7 +2,11 @@ package app
 
 import (
 	"errors"
+	"fmt"
+	"net/netip"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,9 +30,8 @@ func (c *Config) defaults() error {
 		return errors.New("data directory is required")
 	}
 	for _, origin := range []string{c.PublicOrigin, c.AdminOrigin} {
-		u, err := url.Parse(origin)
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-			return errors.New("public and admin origins must be exact HTTPS origins without paths")
+		if !exactHTTPSOrigin(origin) {
+			return errors.New("public and admin origins must be canonical HTTPS origins without paths, queries, fragments, or the default :443 port")
 		}
 	}
 	if c.PublicOrigin == c.AdminOrigin {
@@ -60,4 +63,53 @@ func (c *Config) defaults() error {
 		return errors.New("invalid resource limits")
 	}
 	return nil
+}
+
+func exactHTTPSOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.ForceQuery || origin != "https://"+u.Host {
+		return false
+	}
+	host := u.Hostname()
+	canonicalHost := host
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.Zone() != "" {
+			return false
+		}
+		canonicalHost = ip.String()
+		if ip.Is6() {
+			if ip.Is4In6() {
+				// Browsers serialize mapped IPv4 addresses as hexadecimal IPv6.
+				b := ip.As16()
+				canonicalHost = fmt.Sprintf("::ffff:%x:%x", uint16(b[12])<<8|uint16(b[13]), uint16(b[14])<<8|uint16(b[15]))
+			}
+			canonicalHost = "[" + canonicalHost + "]"
+		}
+	} else {
+		// Browser hosts are lowercase ASCII; international names need punycode.
+		if host == "" || strings.ContainsAny(host, "#%/:<>?@[\\]^|") {
+			return false
+		}
+		for _, c := range host {
+			if c <= ' ' || c > '~' || c >= 'A' && c <= 'Z' {
+				return false
+			}
+		}
+		last := strings.TrimSuffix(host, ".")
+		last = last[strings.LastIndexByte(last, '.')+1:]
+		// Browsers interpret a numeric final label as IPv4, including legacy
+		// shortened, octal and hexadecimal forms that netip correctly rejects.
+		if last != "" && (strings.Trim(last, "0123456789") == "" ||
+			strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "") {
+			return false
+		}
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || n == 443 {
+			return false
+		}
+		canonicalHost += ":" + strconv.FormatUint(n, 10)
+	}
+	return u.Host == canonicalHost
 }

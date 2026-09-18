@@ -148,9 +148,12 @@ in-container updating is disabled.
 
 ### Store the connector credential
 
-Copy `.env.example` to `.env`. Set the exact, distinct HTTPS origins without a
-path or trailing slash, the issuer, and the audience. The audience is an
-identifier, **not** the tunnel token.
+Copy `.env.example` to `.env`. Set the exact, distinct HTTPS origins using
+lowercase hostnames, with no path, trailing slash, query/fragment marker, or
+explicit default `:443` port. Use canonical IP spellings and punycode for
+international domain names; explicit non-default ports such as `:8443` are
+supported. Set the issuer and audience separately. The audience is an identifier,
+**not** the tunnel token.
 
 ```sh
 cp .env.example .env

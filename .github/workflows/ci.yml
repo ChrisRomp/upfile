@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            e2e/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          cache-dependency-path: go.sum
+      - name: Install frontend and browser test dependencies
+        run: |
+          npm ci --prefix web
+          npm ci --prefix e2e
+      - name: Frontend tests and type-checked build
+        run: |
+          npm test --prefix web
+          npm run build --prefix web
+      - name: Go formatting, static analysis, and race tests
+        run: |
+          unformatted="$(gofmt -l cmd internal web/embed.go)"
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+          go test -race ./...
+      - name: Build production and isolated development binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -o dist/upfile ./cmd/upfile
+          go build -o dist/upfile-dev ./cmd/dev
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Desktop and mobile browser tests
+        env:
+          CI: "true"
+          PLAYWRIGHT_CHANNEL: chromium
+        run: npm test --prefix e2e
+      - name: Retain browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  container:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build production image
+        run: docker build --tag upfile:ci .
+      - name: Require production authentication configuration
+        run: |
+          if docker run --rm upfile:ci; then
+            echo "Production must refuse to start without authentication configuration."
+            exit 1
+          fi

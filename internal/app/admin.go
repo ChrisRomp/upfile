@@ -274,67 +274,74 @@ func (a *App) saveLink(w http.ResponseWriter, r *http.Request) error {
 	writeJSON(w, 200, l)
 	return nil
 }
-func (a *App) revokeLink(id string, rotate bool) (string, error) {
-	if _, err := a.link(id); err != nil {
-		return "", err
+func (a *App) revokeLink(id, actor string, rotate bool) (Link, error) {
+	l, err := a.link(id)
+	if err != nil {
+		return Link{}, err
 	}
-	secret := ""
-	hash := ""
+	action := "link.revoke"
+	l.Active, l.Revoked, l.Status = 0, !rotate, "revoked"
 	if rotate {
-		secret = opaque(32)
-		hash = digest(secret)
+		action = "link.rotate"
+		secret := opaque(32)
+		l.Hash = digest(secret)
+		l.URL = a.cfg.PublicOrigin + "/u/" + id + "#" + secret
 	}
 	tx, err := a.db.Begin()
 	if err != nil {
-		return "", err
+		return Link{}, err
 	}
 	defer tx.Rollback()
 	if rotate {
-		_, err = tx.Exec("UPDATE links SET hash=?,revoked=0 WHERE id=?", hash, id)
+		_, err = tx.Exec("UPDATE links SET hash=?,revoked=0 WHERE id=?", l.Hash, id)
 	} else {
 		_, err = tx.Exec("UPDATE links SET revoked=1 WHERE id=?", id)
 	}
 	if err != nil {
-		return "", err
+		return Link{}, err
 	}
 	if _, err = tx.Exec("DELETE FROM sessions WHERE link_id=?", id); err != nil {
-		return "", err
+		return Link{}, err
 	}
 	if _, err = tx.Exec("UPDATE attempts SET status='canceled',cleanup=1 WHERE link_id=? AND status IN ('allocating','uploading','finalizing','abandoned')", id); err != nil {
-		return "", err
+		return Link{}, err
+	}
+	if err = a.auditTx(tx, actor, action, id); err != nil {
+		return Link{}, err
+	}
+	if rotate {
+		var containerStatus string
+		if err = tx.QueryRow("SELECT status FROM containers WHERE id=?", l.ContainerID).Scan(&containerStatus); err != nil {
+			return Link{}, err
+		}
+		if containerStatus == "active" {
+			l.Status = "active"
+			if l.ExpiresAt <= a.now().Unix() {
+				l.Status = "expired"
+			}
+		}
 	}
 	if err = tx.Commit(); err != nil {
-		return "", err
+		return Link{}, err
 	}
+	// The security change is durable. Cleanup retries must not hide the one-time URL.
 	if err = a.stopInvalidWriters(); err != nil {
-		return "", err
+		a.logCleanup(fmt.Errorf("%s %s: %w", action, id, err))
 	}
-	return secret, nil
+	return l, nil
 }
 func (a *App) revoke(w http.ResponseWriter, r *http.Request) error {
-	if _, err := a.revokeLink(r.PathValue("link"), false); err != nil {
-		return err
-	}
-	if err := a.audit(actor(r), "link.revoke", r.PathValue("link")); err != nil {
+	if _, err := a.revokeLink(r.PathValue("link"), actor(r), false); err != nil {
 		return err
 	}
 	writeJSON(w, 200, map[string]string{"status": "revoked"})
 	return nil
 }
 func (a *App) rotate(w http.ResponseWriter, r *http.Request) error {
-	id := r.PathValue("link")
-	secret, err := a.revokeLink(id, true)
+	l, err := a.revokeLink(r.PathValue("link"), actor(r), true)
 	if err != nil {
 		return err
 	}
-	if err = a.audit(actor(r), "link.rotate", id); err != nil {
-		return err
-	}
-	l, err := a.link(id)
-	if err != nil {
-		return err
-	}
-	l.URL = a.cfg.PublicOrigin + "/u/" + id + "#" + secret
 	writeJSON(w, 200, l)
 	return nil
 }

@@ -52,6 +52,13 @@ Collection endpoints return `{items: [...], total: number}` and accept `q`, `pag
 - `GET /api/files/:id/download` → attachment; supports Range.
 - `GET /api/audit` → paginated `{id,actor,action,target,created_at}` records.
 
+Revocation and rotation atomically record their audit event, invalidate sessions,
+and cancel unfinished attempts. If that transaction fails, existing credentials
+and attempts remain unchanged. After a successful commit, storage cleanup errors
+are logged and retried; rotation still returns its one-time replacement URL.
+Pending cleanup remains visible in `cleanup_errors`, and reserved bytes stay
+charged until cleanup succeeds.
+
 ## Public listener
 
 Uploader page is `/u/:linkID#secret`. Capture and immediately remove the fragment;

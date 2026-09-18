@@ -50,6 +50,8 @@ html[data-theme="dark"] {
   --cp-sheen: rgba(255, 255, 255, 0.04);
   --cp-highlight: rgba(253, 142, 161, 0.12);
 }
+/* Keep small secondary text readable on the dark page background. */
+html[data-theme="dark"] { --cp-text-muted: var(--cp-text-soft); }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; font-size: 15px; line-height: 1.5; }
 a { color: var(--cp-accent); text-underline-offset: 3px; }

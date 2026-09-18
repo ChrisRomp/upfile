@@ -183,11 +183,16 @@ func (a *App) audit(actor, action, target string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("INSERT INTO audit(actor,action,target,created) VALUES(?,?,?,?)", actor, action, target, a.now().Unix()); err != nil {
-		return err
-	}
-	if _, err = tx.Exec("DELETE FROM audit WHERE id <= (SELECT coalesce(max(id),0)-10000 FROM audit)"); err != nil {
+	if err = a.auditTx(tx, actor, action, target); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (a *App) auditTx(tx *sql.Tx, actor, action, target string) error {
+	if _, err := tx.Exec("INSERT INTO audit(actor,action,target,created) VALUES(?,?,?,?)", actor, action, target, a.now().Unix()); err != nil {
+		return err
+	}
+	_, err := tx.Exec("DELETE FROM audit WHERE id <= (SELECT coalesce(max(id),0)-10000 FROM audit)")
+	return err
 }

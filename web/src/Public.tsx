@@ -64,7 +64,6 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
   const failed = state.items.filter((item) => item.status === 'failed').length;
   const canceled = state.items.filter((item) => item.status === 'canceled').length;
   const queued = state.items.filter((item) => item.status === 'queued');
-  const invalid = queued.some((item) => validateFile(item.file, item.comment, link.max_file_bytes));
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => window.clearInterval(timer);
@@ -166,7 +165,7 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
       <div className="actions send-actions">
         {!state.running && (completed > 0 || canceled > 0) && <button onClick={() => queue.clearFinished()}>Clear finished</button>}
         {state.running ? <button className="danger" onClick={() => cancel()}>Cancel remaining</button> :
-          <button className="primary" disabled={disabled || checking || !queued.length || invalid} onClick={send}>{checking ? 'Checking…' : <>Send {queued.length || ''} {queued.length === 1 ? 'file' : 'files'} <span aria-hidden="true">↑</span></>}</button>}
+          <button className="primary" disabled={disabled || checking || !queued.length} onClick={send}>{checking ? 'Checking…' : <>Send {queued.length || ''} {queued.length === 1 ? 'file' : 'files'} <span aria-hidden="true">↑</span></>}</button>}
       </div>
     </section>
     {confirmReset && <Confirm title="Discard the unfinished upload?" label="Reset upload" onClose={() => setConfirmReset(false)} action={async () => {

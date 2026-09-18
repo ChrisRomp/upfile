@@ -281,3 +281,62 @@ test('mixed zero-byte and nonempty completed files retain byte-based progress', 
   await expect(page.locator('.summary-counts')).toHaveText('2 received · 0 failed · 0 canceled · 0 waiting');
   await expectProgress(page, 7, 7, 100);
 });
+
+for (const invalid of ['size', 'filename', 'comment']) {
+  test(`an invalid ${invalid} does not block valid files in the batch`, async ({ page }) => {
+    const admitted = [];
+    await mockLink(page, () => linkInfo(), async (route, pathname) => {
+      expect(pathname).toBe(`/api/links/${id}/attempts`);
+      const { name, size } = route.request().postDataJSON();
+      admitted.push(name);
+      await route.fulfill({ json: { id: 'd'.repeat(32), status: 'completed', size, offset: size } });
+    });
+    await page.goto(publicURL);
+    const badName = invalid === 'filename' ? `${'x'.repeat(256)}.txt` : 'invalid.txt';
+    await page.locator('input[type=file]').setInputFiles([
+      file('before.txt', 'before'),
+      { name: badName, mimeType: 'text/plain', buffer: Buffer.alloc(invalid === 'size' ? 1_000_001 : 1) },
+      file('after.txt', 'after'),
+    ]);
+    const badItem = page.getByRole('listitem').filter({ hasText: badName });
+    if (invalid === 'comment') await badItem.getByRole('textbox').fill('é'.repeat(1025));
+    await expect(badItem.getByRole('status')).toContainText(/exceeds/);
+    await expect(page.getByRole('button', { name: 'Send 3 files', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Send 3 files', exact: true }).click();
+    await expect(page.locator('.summary-counts')).toHaveText('2 received · 1 failed · 0 canceled · 0 waiting');
+    await expect(badItem.getByRole('alert')).toContainText(/exceeds/);
+    expect(admitted).toEqual(['before.txt', 'after.txt']);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`${theme} muted text meets normal-text contrast on every main surface`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme });
+    await mockLink(page, () => linkInfo());
+    await page.goto(publicURL);
+    await expect(page.getByRole('heading', { name: 'September invoices' })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const colors = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const footer = document.querySelector('footer');
+      return {
+        text: getComputedStyle(footer).color,
+        fontSize: getComputedStyle(footer).fontSize,
+        surfaces: ['--cp-bg', '--cp-bg-elevated', '--cp-surface', '--cp-surface-soft']
+          .map(name => ({ name, color: root.getPropertyValue(name).trim() })),
+      };
+    });
+    expect(parseFloat(colors.fontSize)).toBeLessThan(18);
+    const text = colors.text.match(/[\d.]+/g).slice(0, 3).map(Number);
+    if (theme === 'dark') expect(text).toEqual([176, 176, 176]);
+    const luminance = channels => channels.map(value => {
+      const c = value / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, c, index) => sum + c * [0.2126, 0.7152, 0.0722][index], 0);
+    for (const { name, color } of colors.surfaces) {
+      const background = color.slice(1).match(/../g).map(c => parseInt(c, 16));
+      const [lighter, darker] = [luminance(text), luminance(background)].sort((a, b) => b - a);
+      expect((lighter + 0.05) / (darker + 0.05), `${theme} muted text on ${name}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}

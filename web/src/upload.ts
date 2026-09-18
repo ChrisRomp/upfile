@@ -261,7 +261,8 @@ export class UploadQueue {
           }
           const xhr = request.getUnderlyingObject() as XMLHttpRequest;
           xhr.withCredentials = true;
-          xhr.timeout = 60_000;
+          // PATCH duration depends on uplink speed; the server limits inactivity.
+          xhr.timeout = request.getMethod() === 'HEAD' ? 60_000 : 0;
         },
         onShouldRetry: (error, retryAttempt) => {
           if (control.canceled || retryAttempt >= retryDelays.length || !shouldRetryTus(error)) return false;

@@ -42,6 +42,11 @@ Successful upload progress resets that retry budget. Retries retain the same
 admission key and never allocate through tus POST. Cancellation awaits
 `abort(false)`, then uses the application cancellation API and checks its receipt.
 
+HEAD requests have a 60-second browser timeout. PATCH requests have no browser
+wall-clock timeout: the server refreshes its one-minute read deadline as data
+arrives, allowing slow but progressing chunks to finish. Proxy/network timeouts
+can still interrupt requests and use the normal resumable retry flow.
+
 The UI confirms success only after a completed receipt (including an already
 completed admission response). Native browser downloads avoid buffering large
 files in JavaScript; download progress/errors belong to the browser download UI.

@@ -86,6 +86,9 @@ Never persist secrets in localStorage. Do not put filename/comment into tus meta
 Use tus-js-client with `uploadUrl` from admission, `chunkSize` from link info,
 `headers: {'X-Upfile-Request':'1'}`, `withCredentials:true`,
 `storeFingerprintForResuming:false`, no endpoint/metadata/parallel uploads.
+Keep the browser timeout at 60 seconds for HEAD, but disabled for PATCH;
+the server enforces a rolling one-minute read inactivity deadline rather than a
+maximum chunk duration, so slow, progressing transfers are not aborted.
 Guard `onShouldRetry`: retry network/408/429/5xx and offset conflicts with bounded
 backoff for up to three consecutive retries; successful upload progress resets
 the tus retry budget. Never retry authorization, revoked/expired, lost-resource,

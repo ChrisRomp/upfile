@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { UploadOptions } from 'tus-js-client';
+import type { HttpRequest, UploadOptions } from 'tus-js-client';
 import { APIError } from './api';
 import type { Attempt, PublicLink } from './types';
 
@@ -42,6 +42,34 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('serial upload queue', () => {
+  it('bounds HEAD duration without imposing a wall-clock timeout on PATCH', async () => {
+    tus.hold = true;
+    vi.stubGlobal('fetch', vi.fn(async (path: string) =>
+      response(receipt('b1', path.endsWith('/attempts') ? 'uploading' : 'completed'))));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const run = queue.start();
+    await vi.waitFor(() => expect(tus.options).toHaveLength(1));
+    const options = tus.options[0];
+    for (const [method, timeout] of [['HEAD', 60_000], ['PATCH', 0]] as const) {
+      const xhr = { withCredentials: false, timeout: 1234 };
+      const request: HttpRequest = {
+        getMethod: () => method,
+        getURL: () => receipt().upload_url,
+        getUnderlyingObject: () => xhr,
+        setHeader: vi.fn(),
+        getHeader: () => undefined,
+        setProgressHandler: vi.fn(),
+        send: vi.fn(),
+        abort: vi.fn(),
+      };
+      await options.onBeforeRequest?.(request);
+      expect(xhr).toEqual({ withCredentials: true, timeout });
+    }
+    options.onSuccess?.({ lastResponse: {} as never });
+    await run;
+    expect(queue.snapshot().items[0].status).toBe('completed');
+  });
   it('reports the configured retry budget and follows tus counter resets after progress', async () => {
     const { DetailedError } = await vi.importActual<typeof import('tus-js-client')>('tus-js-client');
     const interrupted = new DetailedError('Connection interrupted');

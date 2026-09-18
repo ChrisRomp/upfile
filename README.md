@@ -116,6 +116,19 @@ Cloudflare, and overwrite its storage settings with a **64 MiB per-file limit
 and 512 MiB budget**. Use disposable development data; they are not production
 smoke tests. The test runner accepts the generated local TLS certificate.
 
+For an opt-in slow-uplink regression against that disposable development
+instance, run:
+
+```sh
+UPFILE_SLOW_UPLOAD_TEST=1 npm test --prefix e2e -- slow-upload.spec.cjs --project=desktop
+```
+
+This throttles a Chromium upload to 8 KiB/s and verifies one PATCH completes
+after more than 60 seconds without retrying, then checks the downloaded bytes.
+It temporarily adjusts storage limits, deletes its test container, and restores
+previously configured settings. Allow roughly two minutes; the regular suite
+skips this real-time check.
+
 To complement the Go handler test with an actual **3 GiB HTTPS upload and
 authenticated download checksum check**, keep `make dev` running, complete its
 first-run setup, and run:

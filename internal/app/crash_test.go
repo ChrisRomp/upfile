@@ -11,7 +11,7 @@ import (
 func TestProcessKilledDuringFinalization(t *testing.T) {
 	dir := os.Getenv("UPFILE_CRASH_CHILD_DIR")
 	if dir != "" {
-		a, err := New(Config{DataDir: dir, PublicOrigin: "https://drop.test", AdminOrigin: "https://admin.test", HeadroomBytes: 1}, testVerifier{}, nil)
+		a, err := New(Config{DataDir: dir, Origin: "https://drop.test", HeadroomBytes: 1}, testVerifier{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +43,7 @@ func TestProcessKilledDuringFinalization(t *testing.T) {
 	if status, ok := exit.ProcessState.Sys().(syscall.WaitStatus); !ok || status.Signal() != syscall.SIGKILL {
 		t.Fatalf("unexpected child exit: %v %s", err, output)
 	}
-	a, err := New(Config{DataDir: dir, PublicOrigin: "https://drop.test", AdminOrigin: "https://admin.test", HeadroomBytes: 1}, testVerifier{}, nil)
+	a, err := New(Config{DataDir: dir, Origin: "https://drop.test", HeadroomBytes: 1}, testVerifier{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ for (const configured of [false, true]) {
     // Mock only APIs; load the actual built application without changing the user's settings.
     await page.route('**/api/**', async route => {
       const request = route.request();
-      const pathname = new URL(request.url()).pathname;
+      const pathname = new URL(request.url()).pathname.replace(/^\/admin/, '');
       if (pathname === '/api/surface') {
         await route.fulfill({ json: { surface: 'admin' } });
       } else if (pathname === '/api/settings') {
@@ -30,7 +30,7 @@ for (const configured of [false, true]) {
       }
     });
 
-    await page.goto('https://localhost:8444/settings');
+    await page.goto('https://localhost:8443/admin/settings');
     const maximum = page.getByRole('spinbutton', { name: /^Global maximum file size \(MB\)/ });
     const budget = page.getByRole('spinbutton', { name: /^Total storage budget \(MB\)/ });
     await expect(maximum).toHaveValue(configured ? '1073.741824' : '');
@@ -72,7 +72,7 @@ for (const editing of [false, true]) {
     const saved = [];
     await page.route('**/api/**', async route => {
       const request = route.request();
-      const pathname = new URL(request.url()).pathname;
+      const pathname = new URL(request.url()).pathname.replace(/^\/admin/, '');
       if (pathname === '/api/surface') {
         await route.fulfill({ json: { surface: 'admin' } });
       } else if (pathname === '/api/settings') {
@@ -95,7 +95,7 @@ for (const editing of [false, true]) {
         throw new Error(`Unexpected request: ${request.method()} ${pathname}`);
       }
     });
-    await page.goto(`https://localhost:8444${editing ? `/containers/${container.id}` : '/'}`);
+    await page.goto(`https://localhost:8443/admin${editing ? `/containers/${container.id}` : '/'}`);
     const open = () => page.getByRole('button', { name: editing ? 'Edit request' : /New request/ }).click();
     await open();
     const dialog = page.getByRole('dialog');

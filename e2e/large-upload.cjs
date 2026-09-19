@@ -7,7 +7,7 @@ const { execFileSync } = require('node:child_process');
 // Explicit opt-in: only the isolated cmd/dev localhost fixture is supported.
 if (process.env.UPFILE_LARGE_TEST !== '1') throw new Error('Set UPFILE_LARGE_TEST=1 to run the 3 GiB local transfer.');
 const ca = fs.readFileSync(path.join(__dirname, '../.dev/ca.pem'));
-const admin = 'https://localhost:8444';
+const admin = 'https://localhost:8443/admin';
 const drop = 'https://localhost:8443';
 const size = 3 * 1024 ** 3;
 

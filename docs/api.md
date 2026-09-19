@@ -1,7 +1,9 @@
 # upfile API
 
-The Go service has separate public and administrator listeners. All data is JSON
-unless otherwise specified. Errors are `{ "error": "actionable message", "code": "stable_code" }`.
+The Go service has separate public and administrator listeners behind one external
+origin. Cloudflare routes paths under `/admin/` to the administrator listener and
+other paths to the public listener. All data is JSON unless otherwise specified. Errors are
+`{ "error": "actionable message", "code": "stable_code" }`.
 Mutations require the exact configured `Origin` and `X-Upfile-Request: 1` header
 (tus PATCH uses the same header). No cross-origin access is allowed. Fetch uses
 same-origin credentials. Admin APIs require a validated Cloudflare Access JWT.
@@ -17,9 +19,12 @@ Collection endpoints return `{items: [...], total: number}` and accept `q`, `pag
 (one-based), and `limit` (1–100, default 25).
 Container and link lists reuse the current global maximum within the request;
 row hydration does not calculate global storage usage. Aggregate storage and
-reservation counts are provided separately by `GET /api/settings`.
+reservation counts are provided separately by `GET /admin/api/settings`.
 
 ## Administrator listener
+
+The routes below are shown relative to the administrator listener. Their external
+URLs are prefixed with `/admin`, for example `/admin/api/settings`.
 
 - `GET /api/settings` → `{configured, max_file_bytes, storage_budget_bytes,
   default_link_hours, stored_bytes, reserved_bytes, chunk_bytes, lease_seconds,
@@ -72,7 +77,7 @@ no longer meet the limits or have invalid credentials; cleanup is retried after 
 Settings updates atomically persist the limits, their audit event, and cancellation
 of unfinished uploads that no longer meet the effective limits or have invalid
 credentials. The response is prepared in the transaction, including quota and
-pending-cleanup counts before physical cleanup; use `GET /api/settings` for refreshed
+pending-cleanup counts before physical cleanup; use `GET /admin/api/settings` for refreshed
 counts. Pre-commit failures leave settings, uploads, and bytes unchanged. After
 commit, writer cancellation and cleanup failures are logged and retried without
 reporting the settings update as failed. Lowering the storage budget blocks new
@@ -110,7 +115,7 @@ Never persist secrets in localStorage. Do not put filename/comment into tus meta
   before the first request and reused across retries. Identical retry returns
   same attempt; changed payload is `idempotency_conflict`. Status
   uploading/finalizing/completed/canceled/abandoned. Absolute upload_url is
-  always on the configured public origin.
+  always on the configured origin.
 - `GET /api/links/:id/attempts/:attemptID` → owned attempt/receipt.
 - `POST /api/links/:id/attempts/:attemptID/cancel` with `{}` → `{status:"canceled"}`.
 - `POST /api/links/:id/reset` with `{}` → `{status:"reset"}`. Cancels only a stale

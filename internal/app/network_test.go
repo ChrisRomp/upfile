@@ -72,7 +72,7 @@ func TestSlowJSONResponseDoesNotHoldApplicationLock(t *testing.T) {
 	h := setup(t)
 	w := &blockedResponse{ResponseRecorder: httptest.NewRecorder(), entered: make(chan struct{}), release: make(chan struct{})}
 	defer close(w.release)
-	r := httptest.NewRequest("GET", "https://admin.test/api/settings", nil)
+	r := httptest.NewRequest("GET", "https://drop.test/admin/api/settings", nil)
 	r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
 	go h.admin.ServeHTTP(w, r)
 	select {
@@ -91,7 +91,7 @@ func TestSlowJSONResponseDoesNotHoldApplicationLock(t *testing.T) {
 
 func TestUnexpectedGETBodyRejected(t *testing.T) {
 	h := setup(t)
-	r := httptest.NewRequest("GET", "https://admin.test/api/settings", strings.NewReader("unwanted"))
+	r := httptest.NewRequest("GET", "https://drop.test/admin/api/settings", strings.NewReader("unwanted"))
 	r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
 	w := httptest.NewRecorder()
 	h.admin.ServeHTTP(w, r)
@@ -150,8 +150,8 @@ func TestRevocationStopsStalledNetworkWriter(t *testing.T) {
 	}
 	finished := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		r := httptest.NewRequest("POST", "https://admin.test/api/links/"+l.ID+"/revoke", strings.NewReader("{}"))
-		r.Header.Set("Origin", "https://admin.test")
+		r := httptest.NewRequest("POST", "https://drop.test/admin/api/links/"+l.ID+"/revoke", strings.NewReader("{}"))
+		r.Header.Set("Origin", "https://drop.test")
 		r.Header.Set("X-Upfile-Request", "1")
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
@@ -193,7 +193,7 @@ func TestHTTPRangeDownload(t *testing.T) {
 	_, l, c := h.link(nil)
 	v := h.admit(l, c, "range-download-key", 6, 201)
 	h.patch(l, c, v, 0, "abcdef", 204)
-	r := httptest.NewRequest("GET", "https://admin.test/api/files/"+v.ID+"/download", nil)
+	r := httptest.NewRequest("GET", "https://drop.test/admin/api/files/"+v.ID+"/download", nil)
 	r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
 	r.Header.Set("Range", "bytes=2-4")
 	w := httptest.NewRecorder()

@@ -5,8 +5,8 @@ test('a progressing PATCH can exceed 60 seconds without retrying', async ({ page
   test.skip(process.env.UPFILE_SLOW_UPLOAD_TEST !== '1' || testInfo.project.name !== 'desktop',
     'Opt-in real-time slow-uplink check against the isolated development fixture.');
   test.setTimeout(150000);
-  const admin = 'https://localhost:8444';
-  const headers = { Origin: admin, 'X-Upfile-Request': '1' };
+  const admin = 'https://localhost:8443/admin';
+  const headers = { Origin: 'https://localhost:8443', 'X-Upfile-Request': '1' };
   async function api(method, path, data) {
     const response = await request.fetch(admin + path, { method, headers, data });
     expect(response.ok(), `${method} ${path}: ${await response.text()}`).toBeTruthy();

@@ -14,8 +14,7 @@ const MaxSafeInteger int64 = 9007199254740991
 
 type Config struct {
 	DataDir       string
-	PublicOrigin  string
-	AdminOrigin   string
+	Origin        string
 	ChunkBytes    int64
 	HeadroomBytes int64
 	MaxRecords    int
@@ -29,13 +28,8 @@ func (c *Config) defaults() error {
 	if c.DataDir == "" {
 		return errors.New("data directory is required")
 	}
-	for _, origin := range []string{c.PublicOrigin, c.AdminOrigin} {
-		if !exactHTTPSOrigin(origin) {
-			return errors.New("public and admin origins must be canonical HTTPS origins without paths, queries, fragments, port :0, or the default :443 port")
-		}
-	}
-	if c.PublicOrigin == c.AdminOrigin {
-		return errors.New("public and admin origins must differ")
+	if !exactHTTPSOrigin(c.Origin) {
+		return errors.New("origin must be a canonical HTTPS origin without a path, query, fragment, port :0, or the default :443 port")
 	}
 	if c.ChunkBytes == 0 {
 		c.ChunkBytes = 16 << 20

@@ -169,7 +169,7 @@ func (a *App) attempt(id string) (v Attempt, err error) {
 	err = a.db.QueryRow(`SELECT id,link_id,session_hash,key,name,comment,size,status,created,last,reserved,cleanup
 	 FROM attempts WHERE id=?`, id).Scan(&v.ID, &v.LinkID, &v.SessionHash, &v.Key, &v.Name, &v.Comment, &v.Size, &v.Status, &v.CreatedAt, &v.Last, &v.Reserved, &v.Cleanup)
 	if err == nil {
-		v.UploadURL = a.cfg.PublicOrigin + "/api/links/" + v.LinkID + "/uploads/" + v.ID
+		v.UploadURL = a.cfg.Origin + "/api/links/" + v.LinkID + "/uploads/" + v.ID
 		if v.Status == "completed" {
 			v.Offset = v.Size
 		} else {

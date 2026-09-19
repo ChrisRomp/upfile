@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestConfigExactHTTPSOrigins(t *testing.T) {
+func TestConfigExactHTTPSOrigin(t *testing.T) {
 	tests := []struct {
 		name   string
 		origin string
@@ -16,7 +16,7 @@ func TestConfigExactHTTPSOrigins(t *testing.T) {
 		{"test domain", "https://drop.test", true},
 		{"localhost", "https://localhost", true},
 		{"development public", "https://localhost:8443", true},
-		{"development admin", "https://localhost:8444", true},
+		{"alternate development port", "https://localhost:8444", true},
 		{"non-default port", "https://drop.example.com:444", true},
 		{"maximum port", "https://drop.example.com:65535", true},
 		{"IPv4 loopback", "https://127.0.0.1:8443", true},
@@ -78,37 +78,21 @@ func TestConfigExactHTTPSOrigins(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			for _, field := range []string{"public", "admin"} {
-				t.Run(field, func(t *testing.T) {
-					cfg := Config{DataDir: ".", PublicOrigin: "https://public.test", AdminOrigin: "https://administrator.test"}
-					if field == "public" {
-						cfg.PublicOrigin = test.origin
-					} else {
-						cfg.AdminOrigin = test.origin
-					}
-					originalPublic, originalAdmin := cfg.PublicOrigin, cfg.AdminOrigin
-					err := cfg.defaults()
-					if (err == nil) != test.valid {
-						t.Fatalf("defaults() for %q: error = %v, want valid = %v", test.origin, err, test.valid)
-					}
-					if cfg.PublicOrigin != originalPublic || cfg.AdminOrigin != originalAdmin {
-						t.Fatal("defaults changed an origin instead of validating it")
-					}
-					if test.valid {
-						u, err := url.Parse(test.origin + "/api/links/test/uploads/test")
-						if err != nil || u.Path != "/api/links/test/uploads/test" || u.RawQuery != "" || u.Fragment != "" {
-							t.Fatalf("origin is not safe for upload URL concatenation: %v, %v", u, err)
-						}
-					}
-				})
+			cfg := Config{DataDir: ".", Origin: test.origin}
+			original := cfg.Origin
+			err := cfg.defaults()
+			if (err == nil) != test.valid {
+				t.Fatalf("defaults() for %q: error = %v, want valid = %v", test.origin, err, test.valid)
+			}
+			if cfg.Origin != original {
+				t.Fatal("defaults changed the origin instead of validating it")
+			}
+			if test.valid {
+				u, err := url.Parse(test.origin + "/api/links/test/uploads/test")
+				if err != nil || u.Path != "/api/links/test/uploads/test" || u.RawQuery != "" || u.Fragment != "" {
+					t.Fatalf("origin is not safe for upload URL concatenation: %v, %v", u, err)
+				}
 			}
 		})
-	}
-}
-
-func TestConfigOriginsMustDiffer(t *testing.T) {
-	cfg := Config{DataDir: ".", PublicOrigin: "https://drop.test", AdminOrigin: "https://drop.test"}
-	if err := cfg.defaults(); err == nil {
-		t.Fatal("identical public and admin origins accepted")
 	}
 }

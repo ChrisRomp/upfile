@@ -1,6 +1,6 @@
 import { Component, StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, errorMessage } from './api';
+import { adminPath, api, errorMessage, isAdminPath } from './api';
 import Admin from './Admin';
 import Public from './Public';
 import { Brand, Empty, Notice } from './ui';
@@ -29,8 +29,8 @@ function App() {
   }, [version]);
   const id = /^\/u\/([a-f0-9]+)\/?$/.exec(window.location.pathname)?.[1];
   if (surface === 'public' && id) return <Public id={id} />;
-  if (surface === 'admin' && !window.location.pathname.startsWith('/u/')) return <Admin />;
-  if (surface) return <><Brand href={surface === 'admin' ? '/' : undefined} /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened on the public upload address.'}</p></Empty></main></>;
+  if (surface === 'admin' && isAdminPath()) return <Admin />;
+  if (surface) return <><Brand href={surface === 'admin' ? adminPath() : undefined} /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened outside the administration path.'}</p></Empty></main></>;
   return <><Brand /><main className="public-main"><Notice error>{error}</Notice>{error ? <button onClick={() => setVersion((value) => value + 1)}>Retry</button> : <Empty>Opening upfile…</Empty>}</main></>;
 }
 

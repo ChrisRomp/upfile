@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { api, errorMessage } from './api';
+import { adminPath, api, appPath, errorMessage } from './api';
 import { bytes, date, localDateTime, megabytes, readMegabytes, utf8Length } from './format';
 import type { Audit, Collection, Container, CreatedContainer, Link, ReceivedFile, Settings } from './types';
 import { Badge, Brand, Confirm, Empty, Modal, MutationForm, Notice, Pagination, Search } from './ui';
@@ -40,14 +40,14 @@ function FetchStatus({ error, loading, retry }: { error: string; loading: boolea
 
 export default function Admin() {
   const settings = useResource<Settings>('/api/settings');
-  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  const path = window.location.pathname.slice('/admin'.length).replace(/\/$/, '') || '/';
   const containerID = /^\/containers\/([a-f0-9]+)$/.exec(path)?.[1];
   const firstRun = settings.data && !settings.data.configured;
   const tab = firstRun || path === '/settings' ? 'settings' : path === '/audit' ? 'audit' : 'containers';
-  return <><Brand href="/"><nav className="main-nav" aria-label="Main navigation">
-    <a href="/" aria-current={tab === 'containers' ? 'page' : undefined}>Requests</a>
-    <a href="/settings" aria-current={tab === 'settings' ? 'page' : undefined}>Settings</a>
-    <a href="/audit" aria-current={tab === 'audit' ? 'page' : undefined}>Activity</a>
+  return <><Brand href={adminPath()}><nav className="main-nav" aria-label="Main navigation">
+    <a href={adminPath()} aria-current={tab === 'containers' ? 'page' : undefined}>Requests</a>
+    <a href={adminPath('/settings')} aria-current={tab === 'settings' ? 'page' : undefined}>Settings</a>
+    <a href={adminPath('/audit')} aria-current={tab === 'audit' ? 'page' : undefined}>Activity</a>
   </nav><span className="admin-label">Admin</span></Brand>
     <main className="admin-main">
       <FetchStatus {...settings} retry={settings.refresh} />
@@ -56,7 +56,7 @@ export default function Admin() {
           path === '/audit' ? <AuditPage /> :
             containerID ? <ContainerPage id={containerID} settings={settings.data} refreshSettings={settings.refresh} /> :
               path === '/' || path === '/containers' ? <ContainersPage settings={settings.data} /> :
-                <Empty><h1>Page not found</h1><a href="/">Back to requests</a></Empty>}
+                <Empty><h1>Page not found</h1><a href={adminPath()}>Back to requests</a></Empty>}
       </>}
       <footer>Files are untrusted and are not malware-scanned. Download carefully. No file previews.</footer>
     </main>
@@ -158,14 +158,14 @@ function ContainersPage({ settings }: { settings: Settings }) {
   return <>
     <div className="page-heading"><div><p className="eyebrow">Your workspace</p><h1>File requests</h1><p className="muted">A place for each request. A private link for each sender.</p></div>
       <button className="primary" onClick={() => setCreate(true)}>＋ New request</button></div>
-    <div className="usage-strip"><span><strong>{bytes(settings.stored_bytes)}</strong> received</span><span>{bytes(settings.reserved_bytes)} reserved</span><a href="/settings">Manage storage →</a></div>
+    <div className="usage-strip"><span><strong>{bytes(settings.stored_bytes)}</strong> received</span><span>{bytes(settings.reserved_bytes)} reserved</span><a href={adminPath('/settings')}>Manage storage →</a></div>
     <section className="card">
       <div className="toolbar"><Search placeholder="Search requests" value={collection.query} onChange={collection.setQuery} /><button onClick={collection.refresh}>Refresh</button></div>
       <FetchStatus {...collection} retry={collection.refresh} />
       {!collection.loading && !collection.error && !collection.data?.items?.length && <Empty>{collection.query ? 'No requests match your search.' : 'Create a request to get its upload link and start receiving files.'}</Empty>}
       {!!collection.data?.items?.length && <div className="table-scroll"><table><thead><tr><th>Request</th><th>Files</th><th>Storage</th><th>Links</th><th>Recent activity</th><th>Status</th></tr></thead>
         <tbody>{collection.data.items.map((item) => <tr key={item.id}>
-          <td><a className="strong-link" href={`/containers/${item.id}`}>{item.name}</a><span className="table-subtext">{item.active_uploads} uploading · {item.active_downloads} downloading</span></td>
+          <td><a className="strong-link" href={adminPath(`/containers/${item.id}`)}>{item.name}</a><span className="table-subtext">{item.active_uploads} uploading · {item.active_downloads} downloading</span></td>
           <td>{item.file_count}</td><td>{bytes(item.stored_bytes)}</td><td>{item.link_count}</td><td className="nowrap">{date(item.last_activity ?? item.created_at)}</td><td><Badge status={item.status} /></td>
         </tr>)}</tbody></table></div>}
       {collection.data && <Pagination page={collection.page} total={collection.data.total} limit={LIMIT} onChange={collection.setPage} />}
@@ -210,9 +210,9 @@ function ContainerPage({ id, settings, refreshSettings }: { id: string; settings
     catch (error) { setActionError(errorMessage(error)); }
   }
   return <>
-    <a className="back-link" href="/">← All requests</a>
+    <a className="back-link" href={adminPath()}>← All requests</a>
     <FetchStatus {...resource} retry={resource.refresh} /><Notice error>{actionError}</Notice><Notice>{message}</Notice>
-    {deleted ? <section className="card"><h1>Request deleted</h1><p>The request and its contents have been removed.</p><a href="/">Back to requests</a></section> : container && <>
+    {deleted ? <section className="card"><h1>Request deleted</h1><p>The request and its contents have been removed.</p><a href={adminPath()}>Back to requests</a></section> : container && <>
       <div className="page-heading"><div><p className="eyebrow">File request</p><h1>{container.name}</h1>
         <div className="metadata"><Badge status={container.status} /><span>{container.file_count} files · {bytes(container.stored_bytes)}</span><span>{container.active_uploads} uploading · {container.active_downloads} downloading</span></div></div>
         <div className="actions"><button onClick={refresh}>Refresh</button><button disabled={container.status === 'deleting'} onClick={() => setEdit(true)}>Edit request</button><button className="danger" disabled={container.status === 'deleting'} onClick={confirmDeletion}>Delete request</button></div></div>
@@ -375,7 +375,7 @@ function FilesPanel({ container, onChange }: { container: Container; onChange: (
       <p><strong>{download.name}</strong> · {bytes(download.size)}</p>
       <Notice>Received files are untrusted and are not malware-scanned. Only open a file if you trust its source.</Notice>
       <div className="actions form-actions"><button onClick={() => setDownload(undefined)}>Cancel</button>
-        <a className="button" href={`/api/files/${download.id}/download`} download onClick={() => {
+        <a className="button" href={appPath(`/api/files/${download.id}/download`)} download onClick={() => {
           setDownload(undefined); setMessage('Download requested. Check your browser’s downloads for progress and any errors.');
         }}>Download file</a></div>
     </Modal>}

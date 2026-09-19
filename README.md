@@ -16,11 +16,12 @@ You need Docker Engine with Compose, a local filesystem with enough free space,
 and a Cloudflare domain, Zero Trust organization, and remotely managed tunnel.
 This repository does not create Cloudflare resources.
 
-1. Follow [deployment setup](docs/deployment.md) to route `drop.example.com` to
-   `http://app:8080` and `admin.example.com` to `http://app:8081`, with an unmatched
-   route returning 404. Protect **every admin path**, including APIs and downloads,
-   with an Access allow policy for approved account members and enforced MFA.
-2. Copy `.env.example` to `.env`; set both exact HTTPS origins, the Access team
+1. Follow [deployment setup](docs/deployment.md) to route paths matching
+   `^/admin/.*` on `drop.example.com` to `http://app:8081` before routing the rest of
+   `drop.example.com` to `http://app:8080`, with an unmatched route returning 404.
+   Protect the **entire `/admin` namespace**, including APIs and downloads, with an Access
+   allow policy for approved account members and enforced MFA.
+2. Copy `.env.example` to `.env`; set the exact HTTPS origin, the Access team
    issuer, and the admin application's audience. Builds use public npm by
    default and need no npm configuration file. If your machine requires a
    registry/proxy, use the optional Compose override described in
@@ -37,8 +38,9 @@ This repository does not create Cloudflare resources.
    docker compose exec app /upfile healthcheck
    ```
 
-5. Open the admin hostname. First-run setup requires you to choose a maximum file
-   size and total storage budget in megabytes (MB; 1 MB = 1,000,000 bytes).
+5. Open `/admin/` on the configured hostname. First-run setup requires you to
+   choose a maximum file size and total storage budget in megabytes
+   (MB; 1 MB = 1,000,000 bytes).
    Decimal MB values are supported; existing limits retain their exact byte values.
    All size-entry fields use MB, including new/edit request and create/edit upload
    link limits. Leave an override blank to inherit its parent maximum.
@@ -48,7 +50,7 @@ This repository does not create Cloudflare resources.
    Additional sender-specific links can still be created within the request.
    The secret is not recoverable later.
 
-Production Compose publishes **no host ports**. Both origin listeners use HTTP
+Production Compose publishes **no host ports**. Both internal listeners use HTTP
 only inside the dedicated Docker bridge; browser TLS ends at Cloudflare. Keep
 one app replica and preserve its `/data` volume.
 
@@ -63,9 +65,9 @@ make dev
 ```
 
 This builds the interface and runs the separate `cmd/dev` helper, bound only to
-`127.0.0.1`. Open **https://localhost:8444** for administrator first-run setup;
-generated upload links use **https://localhost:8443**. Use `localhost` in URLs,
-not `127.0.0.1`: mutation requests enforce the exact configured origin.
+`127.0.0.1`. Open **https://localhost:8443/admin/** for administrator first-run
+setup; generated upload links use **https://localhost:8443**. Use `localhost` in
+URLs, not `127.0.0.1`: mutation requests enforce the exact configured origin.
 Development state persists
 in ignored `.dev/data`, separately from production, with no preset storage limits.
 The helper uses a local issuer and real signed JWT verification, not a release
@@ -73,7 +75,7 @@ authentication bypass.
 
 Trust the generated development CA at `.dev/ca.pem` **only for local testing**.
 Import it into a dedicated test browser profile's trust store, or explicitly
-approve the localhost certificate warning on **both** local HTTPS origins. The
+approve the localhost certificate warning. The
 helper makes no OS trust changes. It generates a new CA and signing keys on every
 restart, so replace any previous certificate trust/exception after restarting.
 Only the public CA certificate is written to disk; private keys remain in memory.

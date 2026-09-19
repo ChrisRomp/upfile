@@ -5,20 +5,25 @@ on:
     branches: [main]
   push:
     branches: [main]
+    tags: ['[0-9]*.[0-9]*.[0-9]*', 'v[0-9]*.[0-9]*.[0-9]*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   checks:
     name: Tests and build
+    if: github.event_name != 'push' || !github.event.deleted
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      publish: ${{ steps.publication.outputs.publish }}
+      version: ${{ steps.publication.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,13 +35,18 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             e2e/package-lock.json
+      - name: Select publication channel
+        id: publication
+        env:
+          EVENT_DELETED: ${{ github.event.deleted || false }}
+        run: node scripts/container-tags.mjs channel
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.x"
           cache-dependency-path: go.sum
       - name: Install frontend and browser test dependencies
         run: |
-          node --test scripts/check-lockfile-integrity.test.mjs
+          node --test scripts/*.test.mjs
           node scripts/check-lockfile-integrity.mjs
           npm ci --prefix web
           npm ci --prefix e2e
@@ -78,7 +88,7 @@ jobs:
   container:
     name: Docker build
     needs: checks
-    if: github.event_name != 'push'
+    if: needs.checks.outputs.publish != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -97,23 +107,32 @@ jobs:
   publish-container:
     name: Publish Docker image
     needs: checks
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && !github.event.deleted && needs.checks.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: ghcr-upfile-${{ github.ref_type == 'tag' && 'release' || 'main' }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE_NAME: ghcr.io/chrisromp/upfile
+      IMAGE_VERSION: ${{ needs.checks.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
       - name: Build production image
-        env:
-          IMAGE_NAME: ghcr.io/chrisromp/upfile
         run: |
           docker build \
             --tag upfile:ci \
-            --tag "$IMAGE_NAME:main" \
+            --label "org.opencontainers.image.version=$IMAGE_VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             .
       - name: Require production authentication configuration
         run: |
@@ -124,8 +143,17 @@ jobs:
       - name: Log in to GitHub Container Registry
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
-      - name: Publish main image
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Select image tags from published versions
+        id: tags
         env:
-          IMAGE_NAME: ghcr.io/chrisromp/upfile
-        run: docker push "$IMAGE_NAME:main"
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/container-tags.mjs tags
+      - name: Publish image tags
+        env:
+          IMAGE_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            docker tag upfile:ci "$IMAGE_NAME:$tag"
+            docker push "$IMAGE_NAME:$tag"
+          done <<< "$IMAGE_TAGS"

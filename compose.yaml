@@ -2,7 +2,7 @@ name: upfile
 
 services:
   app:
-    image: ghcr.io/chrisromp/upfile:main
+    image: ghcr.io/chrisromp/upfile:latest
     build:
       context: .
     restart: unless-stopped

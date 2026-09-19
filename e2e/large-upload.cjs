@@ -13,10 +13,13 @@ const size = 3 * 1024 ** 3;
 
 async function request(origin, method, url, data, headers = {}) {
   const body = data === undefined ? undefined : Buffer.isBuffer(data) ? data : Buffer.from(JSON.stringify(data));
+  const target = url.startsWith('http://') || url.startsWith('https://')
+    ? new URL(url)
+    : new URL(origin.replace(/\/$/, '') + (url.startsWith('/') ? url : `/${url}`));
   return new Promise((resolve, reject) => {
-    const req = https.request(new URL(url, origin), {
+    const req = https.request(target, {
       ca, method, headers: {
-        Origin: origin, 'X-Upfile-Request': '1',
+        Origin: target.origin, 'X-Upfile-Request': '1',
         ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {}),
         ...headers,
       },

@@ -15,12 +15,29 @@ containers drop all capabilities, forbid privilege escalation, use read-only
 root filesystems, and have memory/PID limits. The app gets a writable `/data`
 volume and a bounded, non-executable scratch mount at `/run/upfile`.
 
-Every push to `main` that passes CI publishes the production image to GitHub
-Container Registry as `ghcr.io/chrisromp/upfile:main`. The Compose configuration
-uses that image. Authenticate to GHCR as needed, then refresh it with:
+The Compose configuration uses the latest stable release from GitHub Container
+Registry, `ghcr.io/chrisromp/upfile:latest`. Stable images are published after
+CI passes for a pushed `major.minor.patch` or `vmajor.minor.patch` Git tag;
+the `v` prefix is omitted from image tags. `latest` becomes available after
+the first successful stable release, not on a main-branch build.
+
+For example, the first `1.0.0` release publishes `:1.0.0`, `:1.0`, `:1`, and
+`:latest`. The latter three aliases track the highest published version in their
+minor series, major series, and all stable releases, respectively. Backports
+do not move newer aliases backward: `1.5.1` published after `2.0.0` can update
+`:1` and `:1.5`, but not `:latest`. Set `services.app.image` in your deployment
+configuration to a major, minor, or full-version tag when you want to limit
+updates. Release tags should not be moved to different commits.
+
+Every successful push to `main` still publishes `ghcr.io/chrisromp/upfile:main`
+for testing before release; it does not update `latest`. Prerelease and
+build-metadata tags are not published. See the
+[release instructions](../README.md#publish-a-stable-release) to tag a release.
+Authenticate to GHCR as needed, then refresh and restart the app with:
 
 ```sh
 docker compose pull app
+docker compose up -d
 ```
 
 The dedicated bridge has no published host ports. It is deliberately **not**

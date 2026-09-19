@@ -26,7 +26,8 @@ This repository does not create Cloudflare resources.
    allow policy for approved account members and enforced MFA.
 2. Copy `.env.example` to `.env`; set the exact HTTPS origin, the Access team
    issuer, and the admin application's audience. The default Compose deployment
-   pulls the published image. If you build it locally on a machine that requires
+   pulls the latest stable release (`ghcr.io/chrisromp/upfile:latest`).
+   If you build it locally on a machine that requires
    a registry/proxy, use the optional Compose override described in
    [build networking](docs/deployment.md#build-networking).
 3. Put the tunnel token in ignored `deploy/tunnel-token`, with the directory and
@@ -157,10 +158,42 @@ local tests alone do not establish deployment readiness.
 
 GitHub Actions runs frontend tests/build, Go formatting/vet/race tests,
 desktop/mobile browser tests, and a production Docker build on pull requests
-targeting `main` and on pushes to `main`. Successful pushes to `main` publish
-`ghcr.io/chrisromp/upfile:main`; pull requests remain build-only. CI uses a
-fresh local authentication fixture without Cloudflare credentials and does not
-deploy services.
+targeting `main`, on pushes to `main`, and on stable version-tag pushes.
+Successful pushes to `main` publish `ghcr.io/chrisromp/upfile:main` for
+pre-release testing; pull requests and manual runs remain build-only. CI uses
+a fresh local authentication fixture without Cloudflare credentials and does
+not deploy services.
+
+## Publish a stable release
+
+Push a `major.minor.patch` Git tag on the commit to release; an optional `v`
+prefix is also accepted. The tagged commit must include the release workflow.
+For example:
+
+```sh
+git tag -a 1.0.0 -m "Release 1.0.0"
+git push origin 1.0.0
+```
+
+After CI passes, the first `1.0.0` release publishes
+`ghcr.io/chrisromp/upfile:1.0.0`, `:1.0`, `:1`, and `:latest`, all pointing to
+the same image. `v1.0.0` produces the same image tags without the `v`.
+Use one spelling per release and do not move an existing release tag to another
+commit. Prerelease tags such as `1.0.0-rc.1`, build metadata, and versions with
+leading-zero components are not published.
+
+`latest` follows the highest successfully published stable version. Major and
+minor aliases follow the highest version within their respective series:
+publishing `1.5.1` after `2.0.0` can update `:1` and `:1.5`, but never moves
+`:latest` backward. Retrying an older patch also cannot roll back its series'
+aliases. Release publication is serialized to protect these comparisons.
+Failed or partially completed publication should be retried through GitHub
+Actions; rerunning a version can finish its eligible aliases.
+
+Compose defaults to `:latest`, which becomes available after the first stable
+release. For a narrower update policy, set the app image to `:1`, `:1.0`, or
+`:1.0.0`; use `:main` only to test unreleased changes. See
+[deployment and operations](docs/deployment.md) for image refresh instructions.
 
 ## Important boundaries
 

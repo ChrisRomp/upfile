@@ -26,6 +26,43 @@ async function fixture(request) {
   return { container, link };
 }
 
+test('automatic uploads persist live comments and name the initial link after the request', async ({ page, request }) => {
+  const { container } = await fixture(request);
+  const link = container.initial_link;
+  expect(link.sender_label).toBe(container.name);
+  let release;
+  await page.route('**/uploads/*', async route => {
+    if (route.request().method() === 'PATCH') await new Promise(resolve => { release = resolve; });
+    await route.continue();
+  });
+  try {
+    await page.goto(link.url);
+    await page.locator('input[type=file]').setInputFiles({
+      name: 'live.txt', mimeType: 'text/plain', buffer: Buffer.from('live upload'),
+    });
+    await expect.poll(() => typeof release).toBe('function');
+    const comment = page.getByRole('textbox', { name: /^Comment/ });
+    await comment.fill('Written during transfer');
+    await expect(page.getByText('Comment saved.', { exact: true })).toBeVisible();
+    expect((await call(request, 'GET', `/api/containers/${container.id}/files`)).total).toBe(0);
+    release();
+    await expect(page.locator('.summary-counts')).toHaveText('1 received · 0 failed · 0 canceled · 0 waiting');
+    let files = await call(request, 'GET', `/api/containers/${container.id}/files`);
+    expect(files.items[0].comment).toBe('Written during transfer');
+    expect(files.items[0].sender_label).toBe(container.name);
+    await comment.fill('Edited after receipt');
+    await expect(page.getByText('Comment saved.', { exact: true })).toBeVisible();
+    files = await call(request, 'GET', `/api/containers/${container.id}/files`);
+    expect(files.items[0].comment).toBe('Edited after receipt');
+    await page.reload();
+    await expect(page.getByText('No files selected yet.', { exact: true })).toBeVisible();
+    expect((await call(request, 'GET', `/api/containers/${container.id}/files`)).items[0].comment).toBe('Edited after receipt');
+  } finally {
+    release?.();
+    await call(request, 'DELETE', `/api/containers/${container.id}`);
+  }
+});
+
 test('multi-file retry, link reuse, progress, safe downloads, rename and delete', async ({ page, context, request }) => {
   const { container, link } = await fixture(request);
   const errors = [];
@@ -55,8 +92,8 @@ test('multi-file retry, link reuse, progress, safe downloads, rename and delete'
     { name: 'beta.txt', mimeType: 'text/plain', buffer: Buffer.from('second file') },
   ]);
   await page.getByRole('textbox', { name: /^Comment/ }).first().fill('<script>alert("plain text")</script>');
-  await page.getByRole('button', { name: 'Send 2 files' }).click();
   await expect(page.getByText('2 received · 0 failed · 0 canceled · 0 waiting')).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText('Comment saved.', { exact: true })).toHaveCount(2);
   await expect(page.getByRole('progressbar', { name: 'Overall byte progress' })).toHaveJSProperty('position', 1);
   expect(patches).toBeGreaterThanOrEqual(3);
   expect(patchIDs[0]).toBe(patchIDs[1]);
@@ -71,7 +108,6 @@ test('multi-file retry, link reuse, progress, safe downloads, rename and delete'
   await page.reload();
   await expect(page.getByRole('heading', { name: container.name })).toBeVisible();
   await page.locator('input[type=file]').setInputFiles({ name: 'again.txt', mimeType: 'text/plain', buffer: Buffer.from('again') });
-  await page.getByRole('button', { name: 'Send 1 file', exact: true }).click();
   await expect(page.getByText('1 received · 0 failed · 0 canceled · 0 waiting')).toBeVisible();
 
   const files = await call(request, 'GET', `/api/containers/${container.id}/files`);
@@ -137,7 +173,6 @@ test('multiple links in separate tabs, missing secret, and mid-queue revocation'
     { name: 'stopped.txt', mimeType: 'text/plain', buffer: Buffer.from('must not complete') },
     { name: 'queued.txt', mimeType: 'text/plain', buffer: Buffer.from('must not start') },
   ]);
-  await page.getByRole('button', { name: 'Send 2 files' }).click();
   await expect(page.getByRole('alert').first()).toBeVisible();
   const files = await call(request, 'GET', `/api/containers/${container.id}/files`);
   expect(files.total).toBe(0);
@@ -149,7 +184,6 @@ test('cancel an active file without undoing received files', async ({ page, requ
   await page.goto(link.url);
   await expect(page.getByRole('heading', { name: container.name })).toBeVisible();
   await page.locator('input[type=file]').setInputFiles({name:'kept.txt',mimeType:'text/plain',buffer:Buffer.from('keep')});
-  await page.getByRole('button', {name:'Send 1 file',exact:true}).click();
   await expect(page.getByText('1 received · 0 failed · 0 canceled · 0 waiting')).toBeVisible();
   let started;
   const firstPatch = new Promise(resolve => {started=resolve;});
@@ -165,7 +199,6 @@ test('cancel an active file without undoing received files', async ({ page, requ
     await route.continue();
   });
   await page.locator('input[type=file]').setInputFiles({name:'canceled.txt',mimeType:'text/plain',buffer:Buffer.alloc(1024,7)});
-  await page.getByRole('button', {name:'Send 1 file',exact:true}).click();
   await firstPatch;
   await page.getByRole('listitem').filter({hasText:'canceled.txt'}).getByRole('button',{name:/Cancel/}).click();
   release();

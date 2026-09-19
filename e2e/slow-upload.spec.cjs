@@ -31,15 +31,14 @@ test('a progressing PATCH can exceed 60 seconds without retrying', async ({ page
     });
     await page.goto(container.initial_link.url);
     await expect(page.getByRole('heading', { name: container.name })).toBeVisible();
-    await page.locator('input[type=file]').setInputFiles({
-      name: 'slow.txt', mimeType: 'text/plain', buffer: payload,
-    });
     network = await context.newCDPSession(page);
     await network.send('Network.enable');
     await network.send('Network.emulateNetworkConditions', {
       offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 8 * 1024,
     });
-    await page.getByRole('button', { name: 'Send 1 file', exact: true }).click();
+    await page.locator('input[type=file]').setInputFiles({
+      name: 'slow.txt', mimeType: 'text/plain', buffer: payload,
+    });
     const progress = page.getByRole('progressbar', { name: 'Upload progress for slow.txt', exact: true });
     await expect(progress).toBeVisible();
     await expect.poll(async () => progress.evaluate(element => element.value), { timeout: 15000 }).toBeGreaterThan(0);

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { adminPath, api, appPath, errorMessage } from './api';
 import { bytes, date, localDateTime, megabytes, readMegabytes, utf8Length } from './format';
 import type { Audit, Collection, Container, CreatedContainer, Link, ReceivedFile, Settings } from './types';
-import { Badge, Brand, Confirm, Empty, Modal, MutationForm, Notice, Pagination, Search } from './ui';
+import { Badge, Brand, Confirm, Empty, Footer, Modal, MutationForm, Notice, Pagination, Search } from './ui';
 
 const LIMIT = 25;
 const REQUEST_TABS = ['files', 'links'] as const;
@@ -58,7 +58,7 @@ export default function Admin() {
               path === '/' || path === '/containers' ? <ContainersPage settings={settings.data} /> :
                 <Empty><h1>Page not found</h1><a href={adminPath()}>Back to requests</a></Empty>}
       </>}
-      <footer>Files are untrusted and are not malware-scanned. Download carefully. No file previews.</footer>
+      <Footer>Files are untrusted and are not malware-scanned. Download carefully. No file previews.</Footer>
     </main>
   </>;
 }
@@ -147,7 +147,7 @@ function ContainerForm({ initial, globalMax, onSaved, onClose }: {
       <label>Public instructions <span className="muted">(optional)</span><textarea rows={4} value={instructions} onChange={(event) => setInstructions(event.target.value)} />
         <span className="field-hint">Visible to anyone with an upload link. Plain text only.</span></label>
       <SizeField label="Maximum file size" value={max} onChange={setMax} inherited={globalMax} />
-      {!initial && <p className="small muted">An upload link labeled “Default link” is created automatically, with the default expiration and this request’s file-size limit. You can copy it next and edit its settings later.</p>}
+      {!initial && <p className="small muted">An upload link with the same name as this request is created automatically, with the default expiration and this request’s file-size limit. You can copy it next and edit its settings later.</p>}
     </MutationForm>
   </Modal>;
 }

@@ -431,7 +431,7 @@ func TestCreationPreparesResponseBeforeCommit(t *testing.T) {
 					link = created.InitialLink
 					stored := decode[Container](t, h.call(true, "GET", "/api/containers/"+created.ID, nil, nil, 200))
 					if !reflect.DeepEqual(created.Container, stored) || created.LinkCount != 1 || created.LastActivity != now.Unix() ||
-						link.SenderLabel != "Default link" || link.MaxFileBytes != nil || link.EffectiveMax != 512 {
+						link.SenderLabel != created.Name || link.MaxFileBytes != nil || link.EffectiveMax != 512 {
 						t.Fatalf("initial-link response metadata mismatch: %+v", created)
 					}
 				} else if link.EffectiveMax != 256 || link.MaxFileBytes == nil || *link.MaxFileBytes != 256 {

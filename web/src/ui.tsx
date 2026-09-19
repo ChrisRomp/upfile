@@ -6,6 +6,12 @@ export function Brand({ children, href }: { children?: ReactNode; href?: string 
   const name = <>{BRAND}<span aria-hidden="true">↥</span></>;
   return <header className="site-header">{href ? <a className="brand" href={href}>{name}</a> : <span className="brand">{name}</span>}{children}</header>;
 }
+export function Footer({ children }: { children?: ReactNode }) {
+  return <footer>
+    {children && <div>{children}</div>}
+    <div>Powered by <a href="https://github.com/chrisromp/upfile" target="_blank" rel="noopener noreferrer">upfile</a></div>
+  </footer>;
+}
 export function Notice({ children, error = false }: { children?: ReactNode; error?: boolean }) {
   return children ? <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{children}</div> : null;
 }

@@ -3,14 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { adminPath, api, errorMessage, isAdminPath } from './api';
 import Admin from './Admin';
 import Public from './Public';
-import { Brand, Empty, Notice } from './ui';
+import { Brand, Empty, Footer, Notice } from './ui';
 import './styles.css';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() {
-    if (this.state.failed) return <><Brand /><main className="public-main"><Notice error>The page encountered an unexpected error. Reload to recover. Any selected local files will need to be selected again.</Notice><button onClick={() => window.location.reload()}>Reload</button></main></>;
+    if (this.state.failed) return <><Brand /><main className="public-main"><Notice error>The page encountered an unexpected error. Reload to recover. Any selected local files will need to be selected again.</Notice><button onClick={() => window.location.reload()}>Reload</button><Footer /></main></>;
     return this.props.children;
   }
 }
@@ -30,8 +30,8 @@ function App() {
   const id = /^\/u\/([a-f0-9]+)\/?$/.exec(window.location.pathname)?.[1];
   if (surface === 'public' && id) return <Public id={id} />;
   if (surface === 'admin' && isAdminPath()) return <Admin />;
-  if (surface) return <><Brand href={surface === 'admin' ? adminPath() : undefined} /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened outside the administration path.'}</p></Empty></main></>;
-  return <><Brand /><main className="public-main"><Notice error>{error}</Notice>{error ? <button onClick={() => setVersion((value) => value + 1)}>Retry</button> : <Empty>Opening upfile…</Empty>}</main></>;
+  if (surface) return <><Brand href={surface === 'admin' ? adminPath() : undefined} /><main className="public-main"><Empty><h1>Page not found</h1><p>{surface === 'public' ? 'Open the complete upload link shared with you.' : 'Upload links must be opened outside the administration path.'}</p></Empty><Footer /></main></>;
+  return <><Brand /><main className="public-main"><Notice error>{error}</Notice>{error ? <button onClick={() => setVersion((value) => value + 1)}>Retry</button> : <Empty>Opening upfile…</Empty>}<Footer /></main></>;
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><ErrorBoundary><App /></ErrorBoundary></StrictMode>);

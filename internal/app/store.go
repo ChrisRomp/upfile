@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_link ON sessions(link_id);
 CREATE TABLE IF NOT EXISTS attempts (
  id TEXT PRIMARY KEY, link_id TEXT NOT NULL REFERENCES links(id), session_hash TEXT NOT NULL,
- key TEXT NOT NULL, name TEXT NOT NULL, comment TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>=0),
+ key TEXT NOT NULL, name TEXT NOT NULL, comment TEXT NOT NULL, admission_comment TEXT NOT NULL DEFAULT '',
+ size INTEGER NOT NULL CHECK(size>=0),
  status TEXT NOT NULL, created INTEGER NOT NULL, last INTEGER NOT NULL, reserved INTEGER NOT NULL,
  cleanup INTEGER NOT NULL DEFAULT 0, UNIQUE(session_hash,key));
 CREATE INDEX IF NOT EXISTS attempts_link ON attempts(link_id,status);
@@ -40,7 +41,7 @@ CREATE INDEX IF NOT EXISTS files_container ON files(container_id,created);
 CREATE TABLE IF NOT EXISTS audit (
  id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL,
  target TEXT NOT NULL, created INTEGER NOT NULL);
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 `
 
 func openDB(dir string) (*sql.DB, error) {
@@ -56,18 +57,38 @@ func openDB(dir string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	var version int
-	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err == nil && version > 1 {
-		err = fmt.Errorf("database schema %d is newer than this application", version)
-	}
-	if err == nil {
-		_, err = db.Exec(schema)
-	}
-	if err != nil {
+	if err = initializeSchema(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+func initializeSchema(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var version int
+	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	switch version {
+	case 0:
+		_, err = tx.Exec(schema)
+	case 1:
+		_, err = tx.Exec(`ALTER TABLE attempts ADD COLUMN admission_comment TEXT NOT NULL DEFAULT '';
+			UPDATE attempts SET admission_comment=comment;
+			PRAGMA user_version=2;`)
+	case 2:
+	default:
+		return fmt.Errorf("database schema %d is newer than this application", version)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type queryer interface {
@@ -166,8 +187,8 @@ func (a *App) linkWithContainer(l Link, c Container) Link {
 }
 
 func (a *App) attempt(id string) (v Attempt, err error) {
-	err = a.db.QueryRow(`SELECT id,link_id,session_hash,key,name,comment,size,status,created,last,reserved,cleanup
-	 FROM attempts WHERE id=?`, id).Scan(&v.ID, &v.LinkID, &v.SessionHash, &v.Key, &v.Name, &v.Comment, &v.Size, &v.Status, &v.CreatedAt, &v.Last, &v.Reserved, &v.Cleanup)
+	err = a.db.QueryRow(`SELECT id,link_id,session_hash,key,name,comment,admission_comment,size,status,created,last,reserved,cleanup
+	 FROM attempts WHERE id=?`, id).Scan(&v.ID, &v.LinkID, &v.SessionHash, &v.Key, &v.Name, &v.Comment, &v.AdmissionComment, &v.Size, &v.Status, &v.CreatedAt, &v.Last, &v.Reserved, &v.Cleanup)
 	if err == nil {
 		v.UploadURL = a.cfg.Origin + "/api/links/" + v.LinkID + "/uploads/" + v.ID
 		if v.Status == "completed" {

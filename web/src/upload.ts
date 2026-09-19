@@ -9,6 +9,9 @@ export interface QueueItem {
   key: string;
   file: File;
   comment: string;
+  savedComment: string | undefined;
+  commentStatus: 'saved' | 'pending' | 'saving' | 'failed';
+  commentError: string;
   status: QueueStatus;
   sent: number;
   message: string;
@@ -60,6 +63,8 @@ export class UploadQueue {
   private listeners = new Set<() => void>();
   private active?: { id: string; control: Control };
   private stopQueue = false;
+  private commentTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private commentSaves = new Set<string>();
   constructor(private link: PublicLink) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.state;
@@ -73,27 +78,86 @@ export class UploadQueue {
   }
   add(files: File[]) {
     const items = files.map((file): QueueItem => ({
-      id: crypto.randomUUID(), key: crypto.randomUUID(), file, comment: '',
+      id: crypto.randomUUID(), key: crypto.randomUUID(), file, comment: '', savedComment: '',
+      commentStatus: 'saved', commentError: '',
       status: 'queued', sent: 0, message: '',
     }));
     this.publish({ items: [...this.state.items, ...items], message: '' });
   }
   comment(id: string, comment: string) {
     const item = this.state.items.find((entry) => entry.id === id);
-    if (!this.state.running && item?.status === 'queued' && !item.submitted) this.patch(id, { comment });
+    if (!item || item.status === 'canceled') return;
+    this.patch(id, { comment, commentStatus: 'pending', commentError: '' });
+    clearTimeout(this.commentTimers.get(id));
+    this.commentTimers.set(id, setTimeout(() => {
+      this.commentTimers.delete(id);
+      void this.saveComment(id);
+    }, 400));
+  }
+  retryComment(id: string) {
+    clearTimeout(this.commentTimers.get(id));
+    this.commentTimers.delete(id);
+    void this.saveComment(id);
+  }
+  private async saveComment(id: string) {
+    if (this.commentSaves.has(id)) return;
+    clearTimeout(this.commentTimers.get(id));
+    this.commentTimers.delete(id);
+    this.commentSaves.add(id);
+    let attemptID: string | undefined;
+    try {
+      while (true) {
+        const item = this.state.items.find((entry) => entry.id === id);
+        if (!item || item.status === 'canceled') return;
+        if (utf8Length(item.comment) > 2048) {
+          this.patch(id, { commentStatus: 'failed', commentError: 'The comment exceeds 2,048 UTF-8 bytes. Shorten it to save.' });
+          return;
+        }
+        if (item.comment === item.savedComment) {
+          this.patch(id, { commentStatus: 'saved', commentError: '' });
+          return;
+        }
+        if (!item.attempt) return;
+        const target = item.attempt.id;
+        attemptID = target;
+        const comment = item.comment;
+        // A lost response may still have saved this value on the server.
+        this.patch(id, { commentStatus: 'saving', commentError: '', savedComment: undefined });
+        try {
+          await withRetry(() => api(this.attemptPath(target) + '/comment', 'PUT', { comment }));
+          const current = this.state.items.find((entry) => entry.id === id);
+          if (current?.attempt?.id !== attemptID || current.status === 'canceled') return;
+          this.patch(id, { savedComment: comment });
+        } catch (error) {
+          const current = this.state.items.find((entry) => entry.id === id);
+          if (current?.attempt?.id !== attemptID || current.status === 'canceled') return;
+          if (current.comment !== comment) continue;
+          this.patch(id, { commentStatus: 'failed', commentError: `Comment not saved: ${errorMessage(error)}` });
+          return;
+        }
+      }
+    } finally {
+      this.commentSaves.delete(id);
+      const current = this.state.items.find((entry) => entry.id === id);
+      if (attemptID && current?.attempt && current.attempt.id !== attemptID) void this.saveComment(id);
+    }
   }
   remove(id: string) {
     this.publish({ items: this.state.items.filter((item) => item.id !== id || item.status !== 'queued' || item.submitted) });
   }
   clearFinished() {
-    this.publish({ items: this.state.items.filter((item) => item.status !== 'completed' && item.status !== 'canceled') });
+    this.publish({ items: this.state.items.filter((item) =>
+      item.status !== 'canceled' && (item.status !== 'completed' || item.commentStatus !== 'saved')) });
   }
   retry(id: string) {
     const item = this.state.items.find((entry) => entry.id === id);
     if (!item || this.state.running) return;
     this.patch(id, {
       status: 'queued', message: '',
-      ...(item.fresh || item.status === 'canceled' ? { key: crypto.randomUUID(), attempt: undefined, fresh: false, submitted: false, sent: 0 } : {}),
+      ...(item.fresh || item.status === 'canceled' ? {
+        key: crypto.randomUUID(), attempt: undefined, fresh: false, submitted: false, sent: 0,
+        savedComment: '', commentStatus: item.comment ? 'pending' : 'saved', commentError: '',
+      } : {}),
     });
     this.publish({ message: '' });
   }
@@ -178,6 +242,7 @@ export class UploadQueue {
     const receipt = await withRetry(() => api<Attempt>(this.attemptPath(item.attempt!.id)));
     if (receipt.status === 'completed') {
       this.patch(item.id, { status: 'completed', sent: item.file.size, message: 'Received before cancellation.', attempt: receipt });
+      void this.saveComment(item.id);
       return true;
     }
     if (receipt.status !== 'canceled' && receipt.status !== 'abandoned') {
@@ -185,6 +250,7 @@ export class UploadQueue {
       const settled = await withRetry(() => api<Attempt>(this.attemptPath(item.attempt!.id)));
       if (settled.status === 'completed') {
         this.patch(item.id, { status: 'completed', sent: item.file.size, message: 'Received before cancellation.', attempt: settled });
+        void this.saveComment(item.id);
         return true;
       }
       if (settled.status !== 'canceled' && settled.status !== 'abandoned') {
@@ -197,11 +263,12 @@ export class UploadQueue {
   private attemptPath(id: string) { return `/api/links/${this.link.id}/attempts/${id}`; }
   private admit(item: QueueItem) {
     return api<Attempt>(`/api/links/${this.link.id}/attempts`, 'POST', {
-      key: item.key, name: item.file.name, comment: item.comment, size: item.file.size,
+      // Keep admission retries immutable; editable comments use their own endpoint.
+      key: item.key, name: item.file.name, comment: '', size: item.file.size,
     });
   }
   private async runFile(item: QueueItem, control: Control) {
-    const invalid = validateFile(item.file, item.comment, this.link.max_file_bytes);
+    const invalid = validateFile(item.file, '', this.link.max_file_bytes);
     if (invalid) throw new APIError(invalid, 'invalid_input');
     this.patch(item.id, { status: 'admitting', submitted: true, message: 'Preparing upload…' });
     const attempt = item.attempt
@@ -211,6 +278,7 @@ export class UploadQueue {
     this.patch(item.id, { attempt });
     if (attempt.status === 'completed') {
       this.patch(item.id, { status: 'completed', sent: item.file.size, message: 'Received.' });
+      void this.saveComment(item.id);
       return;
     }
     if (control.canceled) throw new CancelRequested();
@@ -218,6 +286,7 @@ export class UploadQueue {
       this.patch(item.id, { fresh: true });
       throw new APIError('This attempt ended. Select Start fresh to send a new upload.', 'attempt_unavailable');
     }
+    void this.saveComment(item.id);
     if (attempt.status === 'uploading') await this.transfer(item, attempt, control);
     this.patch(item.id, { status: 'verifying', message: 'Confirming receipt…' });
     for (let index = 0; index < 8; index++) {

@@ -169,7 +169,7 @@ func (a *App) admit(w http.ResponseWriter, r *http.Request) error {
 		if e != nil {
 			return e
 		}
-		if old.LinkID != l.ID || old.Name != v.Name || old.Comment != v.Comment || old.Size != v.Size {
+		if old.LinkID != l.ID || old.Name != v.Name || old.AdmissionComment != v.Comment || old.Size != v.Size {
 			return problem(409, "idempotency_conflict", "This upload key was already used for different content.")
 		}
 		if old.Status == "canceled" || old.Status == "abandoned" {
@@ -241,8 +241,8 @@ func (a *App) admit(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO attempts(id,link_id,session_hash,key,name,comment,size,status,created,last,reserved)
-	 VALUES(?,?,?,?,?,?,?,'allocating',?,?,?)`, id, l.ID, session, v.Key, v.Name, v.Comment, v.Size, now, now, v.Size); err != nil {
+	if _, err = tx.Exec(`INSERT INTO attempts(id,link_id,session_hash,key,name,comment,admission_comment,size,status,created,last,reserved)
+	 VALUES(?,?,?,?,?,?,?,?,'allocating',?,?,?)`, id, l.ID, session, v.Key, v.Name, v.Comment, v.Comment, v.Size, now, now, v.Size); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -307,6 +307,57 @@ func (a *App) receipt(w http.ResponseWriter, r *http.Request) error {
 	writeJSON(w, 200, v)
 	return nil
 }
+
+func (a *App) saveAttemptComment(w http.ResponseWriter, r *http.Request) error {
+	v, err := a.owned(r)
+	if err != nil {
+		return err
+	}
+	switch v.Status {
+	case "allocating", "uploading", "finalizing", "completed":
+	default:
+		return problem(410, "attempt_unavailable", "This upload ended. Its comment cannot be changed.")
+	}
+	var input struct {
+		Comment *string `json:"comment"`
+	}
+	if err = readJSON(w, r, &input); err != nil {
+		return err
+	}
+	if input.Comment == nil || !validText(*input.Comment, 2048, true) {
+		return invalid("Provide a comment up to 2048 bytes, or an empty string to clear it.")
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE attempts SET comment=? WHERE id=?", *input.Comment, v.ID); err != nil {
+		return err
+	}
+	if v.Status == "completed" {
+		result, err := tx.Exec("UPDATE files SET comment=? WHERE id=? AND status='ready'", *input.Comment, v.ID)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return problem(410, "file_unavailable", "This file is no longer available. Its comment cannot be changed.")
+		}
+	}
+	if err = a.auditTx(tx, "uploader", "file.comment", v.ID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	writeJSON(w, 200, map[string]string{"comment": *input.Comment})
+	return nil
+}
+
 func (a *App) cancelAttempt(w http.ResponseWriter, r *http.Request) error {
 	v, err := a.owned(r)
 	if err != nil {

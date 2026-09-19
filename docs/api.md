@@ -36,7 +36,7 @@ URLs are prefixed with `/admin`, for example `/admin/api/settings`.
 - `POST /api/containers` with `{name,instructions,max_file_bytes}` → container plus
   `initial_link` (a link object including its one-time-visible `url`). Creates both
   records and their audit events atomically. The initial link is labeled
-  `Default link`, inherits the request limit (`max_file_bytes: null`), and expires
+  with the container's name, inherits the request limit (`max_file_bytes: null`), and expires
   after `default_link_hours`.
   The UI immediately presents its URL for copying; no second creation step is needed.
   Subsequent reads never return the secret URL. Editing a container does not create a link.
@@ -117,6 +117,13 @@ Never persist secrets in localStorage. Do not put filename/comment into tus meta
   uploading/finalizing/completed/canceled/abandoned. Absolute upload_url is
   always on the configured origin.
 - `GET /api/links/:id/attempts/:attemptID` → owned attempt/receipt.
+- `PUT /api/links/:id/attempts/:attemptID/comment` with `{comment}` → `{comment}`.
+  Saves up to 2048 UTF-8 bytes (empty clears the comment) for an attempt owned by
+  this session, including completed files that have not been deleted.
+  The link and session must still be valid; canceled/abandoned attempts cannot
+  be edited. Updates persist atomically to the attempt and any completed file.
+  Comment edits do not change the original admission payload used for
+  idempotency checks or extend the upload activity lease.
 - `POST /api/links/:id/attempts/:attemptID/cancel` with `{}` → `{status:"canceled"}`.
 - `POST /api/links/:id/reset` with `{}` → `{status:"reset"}`. Cancels only a stale
   lease. Does not disclose or transfer ownership of another session's upload.
@@ -136,8 +143,13 @@ the tus retry budget. Never retry authorization, revoked/expired, lost-resource,
 size, or quota errors. A client fallback to POST cannot allocate an upload. After tus success,
 fetch the attempt receipt; only `completed` is success.
 
-Initial UI queue is serial. Every file has a comment field (2048 UTF-8 bytes),
+The UI starts its serial queue automatically on file selection or drop and allows
+more files to be added during transfer. Every file has a comment field (2048 UTF-8 bytes),
 progress, remove/cancel, and result. Use one admission key per intentional upload.
+The UI admits files with an empty comment, then debounces and serializes comment
+updates separately, during or after transfer. Unsaved or failed comments remain
+visible with a retry action; invalid comments do not stop file transfer.
+Keep the page open until uploads complete and comments show as saved.
 Retry nonterminal admission errors with the same key; explicit fresh starts use a
 new key. Preserve succeeded items, continue file-specific errors, stop queue for
 link/session/quota/busy errors. Show per-file and byte-weighted total progress,

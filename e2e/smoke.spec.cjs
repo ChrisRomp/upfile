@@ -2,9 +2,9 @@ const { test, expect } = require('@playwright/test');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 
-const admin = 'https://localhost:8444';
+const admin = 'https://localhost:8443/admin';
 const publicOrigin = 'https://localhost:8443';
-const mutation = { Origin: admin, 'X-Upfile-Request': '1' };
+const mutation = { Origin: publicOrigin, 'X-Upfile-Request': '1' };
 
 async function call(request, method, path, data) {
   const response = await request.fetch(admin + path, { method, headers: mutation, data });

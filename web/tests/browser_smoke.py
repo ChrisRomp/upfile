@@ -11,6 +11,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
 BASE = "http://127.0.0.1:4178"
+ADMIN = BASE + "/admin"
 NOW = int(time.time())
 Path("test-results").mkdir(exist_ok=True)
 
@@ -43,6 +44,8 @@ with sync_playwright() as playwright:
     def admin_api(route):
         request = route.request
         path = request.url.split(BASE)[1].split("?")[0]
+        if path.startswith("/admin"):
+            path = path[len("/admin"):] or "/"
         method = request.method
         observed.append((method, path))
         if method not in ("GET", "HEAD"):
@@ -109,7 +112,7 @@ with sync_playwright() as playwright:
         raise AssertionError(f"Unexpected admin API: {method} {path}")
 
     context.route("**/api/**", admin_api)
-    page.goto(BASE)
+    page.goto(ADMIN + "/")
     page.wait_for_load_state("networkidle")
     expect(page.get_by_role("heading", name="Welcome to upfile")).to_be_visible()
     expect(page.get_by_label("Global maximum file size")).to_have_value("")
@@ -151,7 +154,7 @@ with sync_playwright() as playwright:
     with page.expect_download() as downloaded:
         page.get_by_role("link", name="Download file", exact=True).click()
     # Chromium native downloads bypass Playwright routing; the backend owns attachment headers.
-    assert downloaded.value.url == BASE + "/api/files/f1/download"
+    assert downloaded.value.url == ADMIN + "/api/files/f1/download"
     page.screenshot(path="test-results/admin.png", full_page=True)
     page.get_by_role("button", name="Delete", exact=True).click()
     expect(page.get_by_text("active downloads and", exact=False)).to_be_visible()

@@ -194,7 +194,7 @@ func TestIssuerWithRealVerifier(t *testing.T) {
 	})
 }
 
-func TestAdminUsesRealAuthenticationAndOriginalOrigin(t *testing.T) {
+func TestAdminUsesRealAuthenticationAndSharedOrigin(t *testing.T) {
 	issuer, err := newLocalIssuer()
 	if err != nil {
 		t.Fatal(err)
@@ -205,21 +205,20 @@ func TestAdminUsesRealAuthenticationAndOriginalOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := app.New(app.Config{
-		DataDir:      testDirectory(t),
-		PublicOrigin: publicOrigin,
-		AdminOrigin:  adminOrigin,
+		DataDir: testDirectory(t),
+		Origin:  devOrigin,
 	}, verifier, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("dev app")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
 	unauthenticated := httptest.NewRecorder()
-	a.Admin().ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, adminOrigin+"/api/settings", nil))
+	a.Admin().ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, devOrigin+"/admin/api/settings", nil))
 	if unauthenticated.Code != http.StatusUnauthorized {
 		t.Fatalf("real admin handler accepted missing assertion: %d", unauthenticated.Code)
 	}
 	admin := issuer.authenticate(a.Admin())
-	request := httptest.NewRequest(http.MethodGet, adminOrigin+"/api/settings", nil)
+	request := httptest.NewRequest(http.MethodGet, devOrigin+"/admin/api/settings", nil)
 	request.Header.Set("Cf-Access-Jwt-Assertion", "attacker-supplied-token")
 	response := httptest.NewRecorder()
 	admin.ServeHTTP(response, request)
@@ -243,14 +242,13 @@ func TestAdminUsesRealAuthenticationAndOriginalOrigin(t *testing.T) {
 		origin string
 		status int
 	}{
-		{"public port rejected", publicOrigin, http.StatusForbidden},
-		{"IP alias rejected", "https://127.0.0.1:8444", http.StatusForbidden},
+		{"IP alias rejected", "https://127.0.0.1:8443", http.StatusForbidden},
 		{"missing origin rejected", "", http.StatusForbidden},
-		{"admin port accepted", adminOrigin, http.StatusOK},
+		{"configured origin accepted", devOrigin, http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"max_file_bytes":1048576,"storage_budget_bytes":10485760,"default_link_hours":24}`
-			request := httptest.NewRequest(http.MethodPut, adminOrigin+"/api/settings", strings.NewReader(body))
+			request := httptest.NewRequest(http.MethodPut, devOrigin+"/admin/api/settings", strings.NewReader(body))
 			request.Header.Set("Origin", test.origin)
 			request.Header.Set("X-Upfile-Request", "1")
 			request.Header.Set("Content-Type", "application/json")
@@ -272,16 +270,11 @@ func TestHTTPSListenersAndGracefulShutdown(t *testing.T) {
 	if !roots.AppendCertsFromPEM(caPEM) {
 		t.Fatal("could not trust local CA")
 	}
-	publicListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer publicListener.Close()
-	adminListener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer adminListener.Close()
+	defer listener.Close()
 	issuer, err := newLocalIssuer()
 	if err != nil {
 		t.Fatal(err)
@@ -295,72 +288,72 @@ func TestHTTPSListenersAndGracefulShutdown(t *testing.T) {
 		TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			// Keep the real URL, SNI, and HTTP origin while avoiding fixed test ports.
-			switch address {
-			case "localhost:8443":
-				address = publicListener.Addr().String()
-			case "localhost:8444":
-				address = adminListener.Addr().String()
+			if address == "localhost:8443" {
+				address = listener.Addr().String()
 			}
 			return (&net.Dialer{}).DialContext(ctx, network, address)
 		},
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	handler := func(origin string) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.TLS == nil || r.TLS.ServerName != "localhost" {
-				t.Error("handler did not receive localhost TLS")
-			}
-			if r.Host != strings.TrimPrefix(origin, "https://") {
-				t.Errorf("host changed: %q", r.Host)
-			}
-			if origin == adminOrigin {
-				principal, err := verifier.Verify(r.Context(), r.Header.Get("Cf-Access-Jwt-Assertion"))
-				if err != nil || principal.Subject != "dev-admin" {
-					t.Errorf("stream authentication failed: principal=%+v err=%v", principal, err)
-					http.Error(w, "unauthenticated", http.StatusUnauthorized)
-					return
-				}
-			} else if r.Header.Get("Cf-Access-Jwt-Assertion") != "" {
-				t.Error("public request received an admin assertion")
-			}
-			if r.Method == http.MethodPatch {
-				if r.Header.Get("Origin") != origin {
-					t.Errorf("origin changed: %q", r.Header.Get("Origin"))
-				}
-				if r.Header.Get("Content-Type") != "application/offset+octet-stream" {
-					t.Error("stream content type changed")
-				}
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Errorf("stream read failed: %v", err)
-					http.Error(w, "read failed", http.StatusBadRequest)
-					return
-				}
-				if _, err := w.Write(body); err != nil {
-					t.Errorf("stream response failed: %v", err)
-				}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || r.TLS.ServerName != "localhost" {
+			t.Error("handler did not receive localhost TLS")
+		}
+		if r.Host != strings.TrimPrefix(devOrigin, "https://") {
+			t.Errorf("host changed: %q", r.Host)
+		}
+		admin := strings.HasPrefix(r.URL.Path, "/admin/")
+		if admin {
+			principal, err := verifier.Verify(r.Context(), r.Header.Get("Cf-Access-Jwt-Assertion"))
+			if err != nil || principal.Subject != "dev-admin" {
+				t.Errorf("stream authentication failed: principal=%+v err=%v", principal, err)
+				http.Error(w, "unauthenticated", http.StatusUnauthorized)
 				return
 			}
-			w.WriteHeader(http.StatusNoContent)
-		})
-	}
-	public := localServer(handler(publicOrigin), certificate)
-	admin := localServer(issuer.authenticate(handler(adminOrigin)), certificate)
-	public.ErrorLog = log.New(io.Discard, "", 0)
-	admin.ErrorLog = log.New(io.Discard, "", 0)
+		} else if r.Header.Get("Cf-Access-Jwt-Assertion") != "" {
+			t.Error("public request received an admin assertion")
+		}
+		if r.Method == http.MethodPatch {
+			if r.Header.Get("Origin") != devOrigin {
+				t.Errorf("origin changed: %q", r.Header.Get("Origin"))
+			}
+			if r.Header.Get("Content-Type") != "application/offset+octet-stream" {
+				t.Error("stream content type changed")
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("stream read failed: %v", err)
+				http.Error(w, "read failed", http.StatusBadRequest)
+				return
+			}
+			if _, err := w.Write(body); err != nil {
+				t.Errorf("stream response failed: %v", err)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	public := handler
+	admin := issuer.authenticate(handler)
+	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/admin/") {
+			admin.ServeHTTP(w, r)
+			return
+		}
+		public.ServeHTTP(w, r)
+	})
+	server := localServer(dispatch, certificate)
+	server.ErrorLog = log.New(io.Discard, "", 0)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan error, 1)
-	go func() { result <- serve(ctx, public, publicListener, admin, adminListener) }()
-	for _, endpoint := range []struct {
-		origin   string
-		listener net.Listener
-	}{
-		{publicOrigin, publicListener},
-		{adminOrigin, adminListener},
+	go func() { result <- serve(ctx, server, listener) }()
+	for _, endpoint := range []string{
+		devOrigin + "/",
+		devOrigin + "/admin/",
 	} {
-		response, err := client.Get(endpoint.origin + "/")
+		response, err := client.Get(endpoint)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,11 +362,11 @@ func TestHTTPSListenersAndGracefulShutdown(t *testing.T) {
 			t.Fatalf("HTTPS request failed: %d", response.StatusCode)
 		}
 		payload := bytes.Repeat([]byte{0, 1, 127, 128, 255}, 64<<10)
-		request, err := http.NewRequest(http.MethodPatch, endpoint.origin+"/stream", io.NopCloser(bytes.NewReader(payload)))
+		request, err := http.NewRequest(http.MethodPatch, endpoint+"stream", io.NopCloser(bytes.NewReader(payload)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set("Origin", endpoint.origin)
+		request.Header.Set("Origin", devOrigin)
 		request.Header.Set("Content-Type", "application/offset+octet-stream")
 		response, err = client.Do(request)
 		if err != nil {
@@ -384,14 +377,14 @@ func TestHTTPSListenersAndGracefulShutdown(t *testing.T) {
 		if readErr != nil || response.StatusCode != http.StatusOK || !bytes.Equal(payload, received) {
 			t.Fatalf("TLS byte stream changed: status=%d bytes=%d err=%v", response.StatusCode, len(received), readErr)
 		}
-		response, err = client.Get("http://" + endpoint.listener.Addr().String() + "/")
-		if err != nil {
-			t.Fatal(err)
-		}
-		response.Body.Close()
-		if response.StatusCode != http.StatusBadRequest {
-			t.Fatalf("plaintext request was not rejected: %d", response.StatusCode)
-		}
+	}
+	response, err := client.Get("http://" + listener.Addr().String() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("plaintext request was not rejected: %d", response.StatusCode)
 	}
 	cancel()
 	select {
@@ -402,11 +395,9 @@ func TestHTTPSListenersAndGracefulShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("listeners did not shut down")
 	}
-	for _, listener := range []net.Listener{publicListener, adminListener} {
-		connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
-		if err == nil {
-			connection.Close()
-			t.Fatal("listener remained open after shutdown")
-		}
+	connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err == nil {
+		connection.Close()
+		t.Fatal("listener remained open after shutdown")
 	}
 }

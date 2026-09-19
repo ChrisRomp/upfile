@@ -1,8 +1,9 @@
 const { test, expect } = require('@playwright/test');
 
 const id = 'c'.repeat(32);
-const origin = surface => process.env.UPFILE_E2E_PUBLIC_URL ||
-  (surface === 'admin' ? 'https://localhost:8444' : 'https://localhost:8443');
+const origin = surface => surface === 'admin'
+  ? process.env.UPFILE_E2E_ADMIN_URL || 'https://localhost:8443/admin'
+  : process.env.UPFILE_E2E_PUBLIC_URL || 'https://localhost:8443';
 const settings = {
   configured: true, max_file_bytes: 1_000_000, storage_budget_bytes: 10_000_000,
   default_link_hours: 168, stored_bytes: 0, reserved_bytes: 0, chunk_bytes: 16_777_216,
@@ -11,7 +12,7 @@ const settings = {
 
 async function mockSurface(page, surface, linkStatus = 200) {
   await page.route('**/api/**', async route => {
-    const pathname = new URL(route.request().url()).pathname;
+    const pathname = new URL(route.request().url()).pathname.replace(/^\/admin/, '');
     if (pathname === '/api/surface') {
       await route.fulfill({ json: { surface } });
     } else if (pathname === '/api/settings') {
@@ -79,11 +80,11 @@ test('admin branding retains home navigation, including its wrong-surface page',
   await page.goto(`${origin('admin')}/settings`);
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
   const home = page.getByRole('link', { name: 'upfile', exact: true });
-  await expect(home).toHaveAttribute('href', '/');
+  await expect(home).toHaveAttribute('href', '/admin/');
   await home.click();
   await expect(page.getByRole('heading', { name: 'File requests', exact: true })).toBeVisible();
-  expect(new URL(page.url()).pathname).toBe('/');
+  expect(new URL(page.url()).pathname).toBe('/admin/');
   await page.goto(`${origin('admin')}/u/${id}`);
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
-  await expect(home).toHaveAttribute('href', '/');
+  await expect(home).toHaveAttribute('href', '/admin/');
 });

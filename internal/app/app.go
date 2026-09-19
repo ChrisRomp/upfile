@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -249,6 +251,9 @@ func (a *App) limited(key string, limit int) bool {
 func (a *App) Public() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ready"}) })
+	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusPermanentRedirect)
+	})
 	m.HandleFunc("GET /api/surface", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"surface": "public"})
 	})
@@ -261,7 +266,7 @@ func (a *App) Public() http.Handler {
 	m.HandleFunc("HEAD /api/links/{link}/uploads/{attempt}", a.uploadHTTP)
 	m.HandleFunc("PATCH /api/links/{link}/uploads/{attempt}", a.uploadHTTP)
 	m.HandleFunc("/", a.static(false))
-	return a.middleware(m, a.cfg.PublicOrigin, false)
+	return a.middleware(m, a.cfg.Origin, false)
 }
 
 func (a *App) Admin() http.Handler {
@@ -285,7 +290,16 @@ func (a *App) Admin() http.Handler {
 	m.HandleFunc("GET /api/files/{file}/download", a.downloadHTTP)
 	m.HandleFunc("GET /api/audit", a.endpoint(a.listAudit))
 	m.HandleFunc("/", a.static(true))
-	return a.middleware(m, a.cfg.AdminOrigin, true)
+	protected := a.middleware(m, a.cfg.Origin, true)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		canonical := strings.TrimSuffix(r.URL.Path, "/")
+		if r.URL.RawPath != "" || !strings.HasPrefix(r.URL.Path, "/admin/") ||
+			(r.URL.Path != "/admin/" && path.Clean(r.URL.Path) != canonical) {
+			http.NotFound(w, r)
+			return
+		}
+		http.StripPrefix("/admin", protected).ServeHTTP(w, r)
+	})
 }
 
 type actorKey struct{}

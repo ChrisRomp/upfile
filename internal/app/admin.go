@@ -172,7 +172,7 @@ func (a *App) saveContainer(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		link.URL = a.cfg.PublicOrigin + "/u/" + linkID + "#" + secret
+		link.URL = a.cfg.Origin + "/u/" + linkID + "#" + secret
 		if err = tx.Commit(); err != nil {
 			return err
 		}
@@ -317,7 +317,7 @@ func (a *App) saveLink(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if secret != "" {
-		l.URL = a.cfg.PublicOrigin + "/u/" + id + "#" + secret
+		l.URL = a.cfg.Origin + "/u/" + id + "#" + secret
 	}
 	if err = tx.Commit(); err != nil {
 		return err
@@ -354,7 +354,7 @@ func (a *App) revokeLink(id, actor string, rotate bool) (Link, error) {
 		action = "link.rotate"
 		secret := opaque(32)
 		l.Hash = digest(secret)
-		l.URL = a.cfg.PublicOrigin + "/u/" + id + "#" + secret
+		l.URL = a.cfg.Origin + "/u/" + id + "#" + secret
 	}
 	tx, err := a.db.Begin()
 	if err != nil {

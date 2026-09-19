@@ -109,10 +109,13 @@ own host/build network configuration; the npm secret does not configure them.
    **Restrict to account members**. Cloudflare documents this supported
    [account-login identity provider][cloudflare-idp]; a third-party IdP is not
    required.
-3. Create a self-hosted Access application for `admin.example.com`. Leave its
-   path unrestricted so it covers **the entire hostname**, not just `/` or UI
-   pages. All `/api/*` paths and `/api/files/:id/download` must be protected.
-   Review overlapping/path-specific Access applications so none bypasses it.
+3. Create a self-hosted Access application for `drop.example.com/admin/*`.
+   Cloudflare documents that this wildcard covers paths below `/admin/`, but not
+   the bare `/admin` path. The bare path contains no application content and only
+   redirects to `/admin/`. Review overlapping applications so none bypass this
+   policy.
+   All `/admin/api/*` paths, including `/admin/api/files/:id/download`, must be
+   protected.
 4. Use an explicit **Allow** policy for approved administrators. The
    **Cloudflare Account Member** selector can restrict membership to the
    intended account. If not every member should administer upfile, also require
@@ -126,35 +129,38 @@ own host/build network configuration; the npm secret does not configure them.
    Cloudflare account login: Cloudflare documents that method only for selected
    other IdPs. Verify the actual login prompts with a fresh browser session.
 6. Copy this Access application's **Application Audience (AUD)** into
-   `UPFILE_AUTH_AUDIENCE`. The issuer is the team domain, not the admin hostname.
+   `UPFILE_AUTH_AUDIENCE`. The issuer is the team domain, not the application hostname.
    Choose an Access session duration appropriate for your administrators.
 
 The app independently verifies the Access JWT signature, issuer, audience and
 time claims. An email header alone is never authentication. There is no local
 password fallback or production bypass when Access is unavailable.
 
-Do not put the uploader hostname behind this admin Access application. Uploaders
-use their scoped bearer links without a Cloudflare account.
+Do not protect the rest of the hostname with this admin Access application.
+Uploaders use their scoped bearer links without a Cloudflare account.
 
 ## 3. Create a remotely managed tunnel
 
 Create a Cloudflare Tunnel in the dashboard. Configure its published applications
 and final fallback as follows:
 
-| Hostname | Origin service |
-| --- | --- |
-| `drop.example.com` | `http://app:8080` |
-| `admin.example.com` | `http://app:8081` |
-| Unmatched host/path catch-all | `http_status:404` |
+| Hostname | Path | Origin service |
+| --- | --- | --- |
+| `drop.example.com` | Regular expression `^/admin/.*` | `http://app:8081` |
+| `drop.example.com` | All other paths | `http://app:8080` |
+| Unmatched host/path catch-all | — | `http_status:404` |
 
-Use exact hostnames, all paths on each hostname, and no wildcard route to the app.
-Confirm that the remote configuration ends in the 404 catch-all. Configure DNS
-records for these tunnel hostnames in Cloudflare. This Compose deployment uses
+Put the `^/admin/.*` rule before the hostname fallback so the public listener can
+never receive admin requests. A request for `/admin` without a trailing slash
+goes to the public listener and redirects to the protected `/admin/` path.
+Use the exact hostname and no wildcard hostname route to the app. Confirm that
+the remote configuration ends in the 404 catch-all. Configure the DNS record for
+this tunnel hostname in Cloudflare. This Compose deployment uses
 the **remote** configuration; it does not read a local ingress YAML file or
 provision DNS, Access, or tunnels.
 
 Keep the original Host header and do not add an HTTP Host override. The app
-expects its configured public/admin origins and same-origin browser requests.
+expects its configured origin and same-origin browser requests.
 TLS terminates at Cloudflare; the encrypted tunnel reaches `cloudflared`, which
 uses plain HTTP to the app on the private bridge. Do not enter `https://app:8080`
 or disable origin TLS verification to compensate for an incorrect service URL.
@@ -166,8 +172,8 @@ in-container updating is disabled.
 
 ### Store the connector credential
 
-Copy `.env.example` to `.env`. Set the exact, distinct HTTPS origins using
-lowercase hostnames, with no path, trailing slash, query/fragment marker, or
+Copy `.env.example` to `.env`. Set the exact HTTPS origin using a lowercase
+hostname, with no path, trailing slash, query/fragment marker, or
 explicit default `:443` port. Use canonical IP spellings and punycode for
 international domain names; explicit non-default ports such as `:8443` are
 supported, but port `:0` is not a valid advertised origin. Set the issuer and
@@ -193,6 +199,11 @@ users. The readable file mode allows the non-root connector (UID/GID 65532) to
 read the bind-mounted Compose secret. Local Compose file secrets preserve host
 permissions; their `uid`, `gid`, and `mode` options cannot be relied upon to
 remap these. The secret is mounted **only into cloudflared**, never the app.
+Compose does not automatically inject arbitrary `.env` entries into containers,
+but using a token value from `.env` would require interpolating it into the
+connector command or environment. That would expose it in rendered Compose or
+container process/environment metadata. The committed configuration keeps only
+the token file's path in `.env` and mounts the credential as a read-only file.
 Alternatively, on Linux arrange host ownership/mode or ACLs to give only UID
 65532 read access, accounting for rootless/user-namespace mappings.
 
@@ -214,8 +225,14 @@ docker compose exec app /upfile healthcheck
 ```
 
 Configuration validation does not prove that a token is valid, image pulls
-succeed, or Cloudflare routing works. Check the tunnel's connector health in
-the dashboard, then test both hostnames.
+succeed, or Cloudflare routing works. Check the tunnel's connector health in the
+dashboard, then test both the public upload path and `/admin/`.
+
+From a logged-out client, request `/admin/api/settings` and confirm Cloudflare
+redirects to Access authentication rather than returning the application's JSON
+`401`. A JSON `401` still fails closed, but means the Access path does not cover
+the admin API as intended. After signing in, verify admin HTML, API mutations,
+and an authenticated file download.
 
 The public `/healthz` endpoint and `upfile healthcheck` support local process
 readiness. Compose waits for app health before starting the connector. A new
@@ -225,8 +242,9 @@ Cloudflare policies, available storage, or end-to-end uploads work. Monitor thos
 separately. Docker's health status alone does not restart an unhealthy process;
 the restart policy applies when a container exits.
 
-Open the admin hostname and sign in. Set the global maximum file size and total
-storage budget in first-run setup; these have **no baked-in deployment default**.
+Open `/admin/` on the configured hostname and sign in. Set the global maximum
+file size and total storage budget in first-run setup; these have **no baked-in
+deployment default**.
 Choose a budget that leaves physical headroom. A file must fit the strictest of
 global, container, and link limits. The budget counts stored bytes and active
 reservations. Reducing limits does not delete completed files.
@@ -251,8 +269,7 @@ against your Docker configuration.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `UPFILE_PUBLIC_ORIGIN` | required | Exact public HTTPS origin |
-| `UPFILE_ADMIN_ORIGIN` | required | Separate exact admin HTTPS origin |
+| `UPFILE_ORIGIN` | required | Exact application HTTPS origin |
 | `UPFILE_AUTH_ISSUER` | required | Access team HTTPS issuer |
 | `UPFILE_AUTH_AUDIENCE` | required | Admin Access application's AUD |
 | `UPFILE_DATA_DIR` | `/data` | Persistent state root |
@@ -277,7 +294,7 @@ seven days); these persist in the database.
 
 ## Cloudflare request settings
 
-- Bypass cache on both application hostnames, including APIs, upload responses,
+- Bypass cache on the application hostname, including APIs, upload responses,
   and downloads. Do not enable Cache Everything, HTML rewriting, injected
   analytics, or script optimizers for the application.
 - Keep chunks below the effective Cloudflare/zone per-request limit. The default

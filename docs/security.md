@@ -6,9 +6,11 @@ The supported deployment has separate public and administrator HTTP listeners,
 reachable only through a configured Cloudflare Tunnel. Production Compose
 publishes no host ports. The public listener does not expose admin APIs or file
 downloads; the admin listener protects pages, APIs, and downloads with validated
-Cloudflare Access JWTs.
+Cloudflare Access JWTs. Externally, both listeners share one HTTPS hostname:
+paths matching `^/admin/.*` route to the administrator listener and all other application paths
+route to the public listener.
 
-Cloudflare Access must protect the **entire admin hostname**, with an explicit
+Cloudflare Access must protect the **entire `/admin` namespace**, with an explicit
 allow policy for approved account members/identities and enforced MFA. A UI-only
 policy is insufficient. The application validates JWT signatures, algorithm,
 issuer, audience and temporal claims; it does not trust an email header as proof
@@ -70,10 +72,15 @@ not inline previews. These restrictions reduce browser execution risks but do
 security environment and treat executables, documents, archives and links inside
 them as untrusted.
 
-Same-origin mutation checks, required request headers and secure cookies protect
-browser request boundaries. Do not add permissive CORS, shared-domain upload
-cookies, third-party scripts, injected analytics, or proxy cache rules that
-weaken those boundaries. The UI has no third-party analytics, scripts or fonts.
+Same-origin mutation checks, required request headers and secure, host-only
+uploader cookies protect browser request boundaries. Uploader cookies are not
+administrator credentials. Because public and admin pages share an origin, a
+public-page script compromise could make authenticated `/admin/`
+requests in an administrator's browser; keep the public UI free of third-party
+scripts and treat XSS prevention as part of the admin boundary. Do not add
+permissive CORS, broader upload cookies, injected analytics, or proxy cache rules
+that weaken those boundaries. The UI has no third-party analytics, scripts or
+fonts.
 
 ## Data and availability
 

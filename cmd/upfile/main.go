@@ -62,7 +62,7 @@ func run() error {
 		}
 		return nil
 	}
-	c := app.Config{DataDir: env("UPFILE_DATA_DIR", "/data"), PublicOrigin: os.Getenv("UPFILE_PUBLIC_ORIGIN"), AdminOrigin: os.Getenv("UPFILE_ADMIN_ORIGIN")}
+	c := app.Config{DataDir: env("UPFILE_DATA_DIR", "/data"), Origin: os.Getenv("UPFILE_ORIGIN")}
 	numbers := map[string]*int64{"UPFILE_CHUNK_BYTES": &c.ChunkBytes, "UPFILE_HEADROOM_BYTES": &c.HeadroomBytes}
 	for name, p := range numbers {
 		v, e := integer(name, 0)

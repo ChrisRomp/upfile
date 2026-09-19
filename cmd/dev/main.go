@@ -13,7 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,22 +23,16 @@ import (
 )
 
 const (
-	publicOrigin = "https://localhost:8443"
-	adminOrigin  = "https://localhost:8444"
-	devDir       = ".dev"
+	devOrigin = "https://localhost:8443"
+	devDir    = ".dev"
 )
 
 func run(ctx context.Context) error {
-	publicListener, err := net.Listen("tcp4", "127.0.0.1:8443")
+	listener, err := net.Listen("tcp4", "127.0.0.1:8443")
 	if err != nil {
-		return fmt.Errorf("listen for public HTTPS: %w", err)
+		return fmt.Errorf("listen for development HTTPS: %w", err)
 	}
-	defer publicListener.Close()
-	adminListener, err := net.Listen("tcp4", "127.0.0.1:8444")
-	if err != nil {
-		return fmt.Errorf("listen for admin HTTPS: %w", err)
-	}
-	defer adminListener.Close()
+	defer listener.Close()
 
 	certificate, caPEM, err := localCertificate()
 	if err != nil {
@@ -58,9 +52,8 @@ func run(ctx context.Context) error {
 		return err
 	}
 	a, err := app.New(app.Config{
-		DataDir:      filepath.Join(devDir, "data"),
-		PublicOrigin: publicOrigin,
-		AdminOrigin:  adminOrigin,
+		DataDir: filepath.Join(devDir, "data"),
+		Origin:  devOrigin,
 	}, verifier, web.Assets())
 	if err != nil {
 		return err
@@ -70,13 +63,21 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("write development CA: %w", err)
 	}
 
-	public := localServer(a.Public(), certificate)
-	admin := localServer(issuer.authenticate(a.Admin()), certificate)
-	slog.Info("development HTTPS ready", "public", publicOrigin, "admin", adminOrigin, "issuer", issuer.server.URL)
-	slog.Warn("LOCAL DEVELOPMENT ONLY: every admin request is signed as dev-admin; do not expose these listeners through a proxy or tunnel")
-	slog.Info("Trust .dev/ca.pem in your browser, or accept the localhost certificate warning on BOTH ports; this CA changes on every restart. OS trust is never modified.")
+	public := a.Public()
+	admin := issuer.authenticate(a.Admin())
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/admin/") {
+			admin.ServeHTTP(w, r)
+			return
+		}
+		public.ServeHTTP(w, r)
+	})
+	server := localServer(handler, certificate)
+	slog.Info("development HTTPS ready", "origin", devOrigin, "admin", devOrigin+"/admin/", "issuer", issuer.server.URL)
+	slog.Warn("LOCAL DEVELOPMENT ONLY: every /admin/ request is signed as dev-admin; do not expose this listener through a proxy or tunnel")
+	slog.Info("Trust .dev/ca.pem in your browser, or accept the localhost certificate warning; this CA changes on every restart. OS trust is never modified.")
 	slog.Info("Private keys exist only in memory. Data persists in .dev/data; configure storage limits in the admin UI before uploading.")
-	return serve(ctx, public, publicListener, admin, adminListener)
+	return serve(ctx, server, listener)
 }
 
 func localServer(handler http.Handler, certificate tls.Certificate) *http.Server {
@@ -92,10 +93,9 @@ func localServer(handler http.Handler, certificate tls.Certificate) *http.Server
 	}
 }
 
-func serve(ctx context.Context, public *http.Server, publicListener net.Listener, admin *http.Server, adminListener net.Listener) error {
-	results := make(chan error, 2)
-	go func() { results <- public.ServeTLS(publicListener, "", "") }()
-	go func() { results <- admin.ServeTLS(adminListener, "", "") }()
+func serve(ctx context.Context, server *http.Server, listener net.Listener) error {
+	results := make(chan error, 1)
+	go func() { results <- server.ServeTLS(listener, "", "") }()
 	var serveErr error
 	select {
 	case <-ctx.Done():
@@ -103,18 +103,10 @@ func serve(ctx context.Context, public *http.Server, publicListener net.Listener
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	var wg sync.WaitGroup
-	for _, server := range []*http.Server{public, admin} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := server.Shutdown(shutdown); err != nil {
-				slog.Warn("forcing development listener shutdown", "error", err)
-				_ = server.Close()
-			}
-		}()
+	if err := server.Shutdown(shutdown); err != nil {
+		slog.Warn("forcing development listener shutdown", "error", err)
+		_ = server.Close()
 	}
-	wg.Wait()
 	if errors.Is(serveErr, http.ErrServerClosed) {
 		return nil
 	}

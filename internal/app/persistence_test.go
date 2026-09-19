@@ -8,7 +8,7 @@ import (
 
 func TestRestartAndStoppedBackupRestore(t *testing.T) {
 	dir := t.TempDir()
-	config := Config{DataDir: dir, PublicOrigin: "https://drop.test", AdminOrigin: "https://admin.test", HeadroomBytes: 1}
+	config := Config{DataDir: dir, Origin: "https://drop.test", HeadroomBytes: 1}
 	a, err := New(config, testVerifier{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestSymlinkDatabaseRejected(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "metadata.db")); err != nil {
 		t.Fatal(err)
 	}
-	if a, err := New(Config{DataDir: dir, PublicOrigin: "https://drop.test", AdminOrigin: "https://admin.test"}, testVerifier{}, nil); err == nil {
+	if a, err := New(Config{DataDir: dir, Origin: "https://drop.test"}, testVerifier{}, nil); err == nil {
 		a.Close()
 		t.Fatal("symlink database accepted")
 	}

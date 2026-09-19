@@ -23,7 +23,7 @@ for (const editing of [false, true]) {
     const saved = [];
     await page.route('**/api/**', async route => {
       const request = route.request();
-      const pathname = new URL(request.url()).pathname;
+      const pathname = new URL(request.url()).pathname.replace(/^\/admin/, '');
       if (pathname === '/api/surface') {
         await route.fulfill({ json: { surface: 'admin' } });
       } else if (pathname === '/api/settings') {
@@ -49,7 +49,7 @@ for (const editing of [false, true]) {
       }
     });
 
-    await page.goto(`https://localhost:8444/containers/${containerID}`);
+    await page.goto(`https://localhost:8443/admin/containers/${containerID}`);
     await page.getByRole('tab', { name: 'Upload links' }).click();
     const open = () => page.getByRole('button', { name: editing ? 'Edit' : '＋ Create link', exact: true }).click();
     await open();

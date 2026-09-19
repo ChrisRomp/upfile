@@ -35,7 +35,7 @@ type harness struct {
 
 func setup(t *testing.T) *harness {
 	t.Helper()
-	a, err := New(Config{DataDir: t.TempDir(), PublicOrigin: "https://drop.test", AdminOrigin: "https://admin.test", HeadroomBytes: 1}, testVerifier{}, nil)
+	a, err := New(Config{DataDir: t.TempDir(), Origin: "https://drop.test", HeadroomBytes: 1}, testVerifier{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +59,8 @@ func (h *harness) call(admin bool, method, path string, value any, cookie *http.
 	origin := "https://drop.test"
 	handler := h.public
 	if admin {
-		origin = "https://admin.test"
 		handler = h.admin
+		path = "/admin" + path
 	}
 	r := httptest.NewRequest(method, origin+path, &b)
 	r.Header.Set("Origin", origin)
@@ -186,7 +186,7 @@ func TestSessionsScopeExpiryAndRotation(t *testing.T) {
 	h := setup(t)
 	_, l, c := h.link(nil)
 	_, l2, c2 := h.link(nil)
-	if c.Name == c2.Name || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+	if c.Name == c2.Name || !strings.HasPrefix(c.Name, "__Host-") || c.Path != "/" || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
 		t.Fatal("unsafe cookies")
 	}
 	h.call(false, "GET", "/api/links/"+l.ID, nil, c2, 401)
@@ -227,13 +227,46 @@ func TestPublicIsolationAndCSRF(t *testing.T) {
 	for _, p := range []string{"/api/settings", "/api/containers", "/api/files/fake/download"} {
 		h.call(false, "GET", p, nil, nil, 404)
 	}
-	r := httptest.NewRequest("GET", "https://admin.test/api/settings", nil)
+	redirect := h.call(false, "GET", "/admin", nil, nil, http.StatusPermanentRedirect)
+	if redirect.Header().Get("Location") != "/admin/" {
+		t.Fatal("admin redirect changed")
+	}
+	h.call(false, "GET", "/admin/api/settings", nil, nil, 404)
+	unprefixed := httptest.NewRequest("GET", "https://drop.test/api/settings", nil)
+	unprefixed.Header.Set("Cf-Access-Jwt-Assertion", "admin")
 	w := httptest.NewRecorder()
+	h.admin.ServeHTTP(w, unprefixed)
+	if w.Code != 404 {
+		t.Fatal("admin listener accepted an unprefixed route")
+	}
+	for _, malformed := range []string{
+		"https://drop.test/admin//api/settings",
+		"https://drop.test/admin/./api/settings",
+		"https://drop.test/admin/api/../api/settings",
+	} {
+		r := httptest.NewRequest("GET", malformed, nil)
+		r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
+		w := httptest.NewRecorder()
+		h.admin.ServeHTTP(w, r)
+		if w.Code != 404 || w.Header().Get("Location") != "" {
+			t.Fatalf("noncanonical admin path escaped: %s: %d %q", malformed, w.Code, w.Header().Get("Location"))
+		}
+	}
+	encoded := httptest.NewRequest("GET", "https://drop.test/admin/api/settings", nil)
+	encoded.URL.RawPath = "/%61dmin/api/settings"
+	encoded.Header.Set("Cf-Access-Jwt-Assertion", "admin")
+	w = httptest.NewRecorder()
+	h.admin.ServeHTTP(w, encoded)
+	if w.Code != 404 {
+		t.Fatal("encoded admin path accepted")
+	}
+	r := httptest.NewRequest("GET", "https://drop.test/admin/api/settings", nil)
+	w = httptest.NewRecorder()
 	h.admin.ServeHTTP(w, r)
 	if w.Code != 401 {
 		t.Fatal("admin auth bypass")
 	}
-	r = httptest.NewRequest("PUT", "https://admin.test/api/settings", strings.NewReader("{}"))
+	r = httptest.NewRequest("PUT", "https://drop.test/admin/api/settings", strings.NewReader("{}"))
 	r.Header.Set("Cf-Access-Jwt-Assertion", "admin")
 	w = httptest.NewRecorder()
 	h.admin.ServeHTTP(w, r)

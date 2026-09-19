@@ -1,12 +1,12 @@
 const { test, expect } = require('@playwright/test');
 
 test('request tabs support roving focus, manual activation, and keyboard exit', async ({ page }) => {
-  const origin = process.env.UPFILE_E2E_ADMIN_URL || 'https://localhost:8444';
+  const origin = process.env.UPFILE_E2E_ADMIN_URL || 'https://localhost:8443/admin';
   const id = 'a'.repeat(32);
   let fileReads = 0;
   let linkReads = 0;
   await page.route('**/api/**', async route => {
-    const path = new URL(route.request().url()).pathname;
+    const path = new URL(route.request().url()).pathname.replace(/^\/admin/, '');
     if (path === '/api/surface') {
       await route.fulfill({ json: { surface: 'admin' } });
     } else if (path === '/api/settings') {

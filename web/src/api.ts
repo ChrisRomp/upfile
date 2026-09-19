@@ -1,5 +1,13 @@
 import type { PublicLink } from './types';
 
+export const ADMIN_BASE = '/admin';
+export const isAdminPath = (pathname?: string): boolean => {
+  const value = pathname ?? (typeof window === 'undefined' ? '' : window.location?.pathname ?? '');
+  return value === ADMIN_BASE || value.startsWith(`${ADMIN_BASE}/`);
+};
+export const appPath = (path: string): string => isAdminPath() ? `${ADMIN_BASE}${path}` : path;
+export const adminPath = (path = '/'): string => path === '/' ? `${ADMIN_BASE}/` : `${ADMIN_BASE}${path}`;
+
 export class APIError extends Error {
   constructor(message: string, public code: string, public status = 0) {
     super(message);
@@ -13,7 +21,7 @@ export const errorMessage = (error: unknown): string =>
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await fetch(appPath(path), {
       method,
       credentials: 'same-origin',
       cache: 'no-store',

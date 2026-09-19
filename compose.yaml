@@ -18,8 +18,7 @@ services:
       UPFILE_DATA_DIR: /data
       UPFILE_PUBLIC_ADDR: ":8080"
       UPFILE_ADMIN_ADDR: ":8081"
-      UPFILE_PUBLIC_ORIGIN: ${UPFILE_PUBLIC_ORIGIN:?Set the exact public HTTPS origin in .env}
-      UPFILE_ADMIN_ORIGIN: ${UPFILE_ADMIN_ORIGIN:?Set the exact admin HTTPS origin in .env}
+      UPFILE_ORIGIN: ${UPFILE_ORIGIN:?Set the exact HTTPS origin in .env}
       UPFILE_AUTH_ISSUER: ${UPFILE_AUTH_ISSUER:?Set the Cloudflare Access team issuer in .env}
       UPFILE_AUTH_AUDIENCE: ${UPFILE_AUTH_AUDIENCE:?Set the admin Access application audience in .env}
       UPFILE_CHUNK_BYTES: ${UPFILE_CHUNK_BYTES:-16777216}

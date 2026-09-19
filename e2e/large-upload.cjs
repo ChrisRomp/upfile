@@ -7,16 +7,19 @@ const { execFileSync } = require('node:child_process');
 // Explicit opt-in: only the isolated cmd/dev localhost fixture is supported.
 if (process.env.UPFILE_LARGE_TEST !== '1') throw new Error('Set UPFILE_LARGE_TEST=1 to run the 3 GiB local transfer.');
 const ca = fs.readFileSync(path.join(__dirname, '../.dev/ca.pem'));
-const admin = 'https://localhost:8444';
+const admin = 'https://localhost:8443/admin';
 const drop = 'https://localhost:8443';
 const size = 3 * 1024 ** 3;
 
 async function request(origin, method, url, data, headers = {}) {
   const body = data === undefined ? undefined : Buffer.isBuffer(data) ? data : Buffer.from(JSON.stringify(data));
+  const target = url.startsWith('http://') || url.startsWith('https://')
+    ? new URL(url)
+    : new URL(origin.replace(/\/$/, '') + (url.startsWith('/') ? url : `/${url}`));
   return new Promise((resolve, reject) => {
-    const req = https.request(new URL(url, origin), {
+    const req = https.request(target, {
       ca, method, headers: {
-        Origin: origin, 'X-Upfile-Request': '1',
+        Origin: target.origin, 'X-Upfile-Request': '1',
         ...(body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {}),
         ...headers,
       },

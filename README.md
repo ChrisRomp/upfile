@@ -21,9 +21,9 @@ This repository does not create Cloudflare resources.
    route returning 404. Protect **every admin path**, including APIs and downloads,
    with an Access allow policy for approved account members and enforced MFA.
 2. Copy `.env.example` to `.env`; set both exact HTTPS origins, the Access team
-   issuer, and the admin application's audience. Builds use public npm by
-   default and need no npm configuration file. If your machine requires a
-   registry/proxy, use the optional Compose override described in
+   issuer, and the admin application's audience. The default Compose deployment
+   pulls the published image. If you build it locally on a machine that requires
+   a registry/proxy, use the optional Compose override described in
    [build networking](docs/deployment.md#build-networking).
 3. Put the tunnel token in ignored `deploy/tunnel-token`, with the directory and
    file permissions described in the deployment guide. Do not put it in `.env`,
@@ -32,7 +32,8 @@ This repository does not create Cloudflare resources.
 
    ```sh
    docker compose config --quiet
-   docker compose up --build -d
+   docker compose pull
+   docker compose up -d
    docker compose ps
    docker compose exec app /upfile healthcheck
    ```
@@ -151,9 +152,10 @@ local tests alone do not establish deployment readiness.
 
 GitHub Actions runs frontend tests/build, Go formatting/vet/race tests,
 desktop/mobile browser tests, and a production Docker build on pull requests
-targeting `main` and on pushes to `main`. CI uses a fresh local authentication
-fixture without Cloudflare credentials. It does not publish images or deploy
-services.
+targeting `main` and on pushes to `main`. Successful pushes to `main` publish
+`ghcr.io/chrisromp/upfile:main`; pull requests remain build-only. CI uses a
+fresh local authentication fixture without Cloudflare credentials and does not
+deploy services.
 
 ## Important boundaries
 

@@ -16,12 +16,11 @@ root filesystems, and have memory/PID limits. The app gets a writable `/data`
 volume and a bounded, non-executable scratch mount at `/run/upfile`.
 
 Every push to `main` that passes CI publishes the production image to GitHub
-Container Registry as `ghcr.io/chrisromp/upfile:main`. To use the published
-image instead of building locally, authenticate to GHCR as needed and pull it
-with:
+Container Registry as `ghcr.io/chrisromp/upfile:main`. The Compose configuration
+uses that image. Authenticate to GHCR as needed, then refresh it with:
 
 ```sh
-docker pull ghcr.io/chrisromp/upfile:main
+docker compose pull app
 ```
 
 The dedicated bridge has no published host ports. It is deliberately **not**
@@ -41,12 +40,14 @@ other users with Docker administration rights.
 
 ### Build networking
 
-The committed lockfiles use canonical `registry.npmjs.org` tarball URLs. Default
-Compose builds and CI use public npm without a private npm configuration file
-or Microsoft feed access:
+The default Compose deployment pulls the published image and does not run npm.
+For an explicit local build, the committed lockfiles use canonical
+`registry.npmjs.org` tarball URLs. Local builds and CI use public npm without a
+private npm configuration file or Microsoft feed access:
 
 ```sh
-docker compose up --build -d
+docker compose build
+docker compose up -d
 ```
 
 Lockfile package integrity uses SHA-512. Before dependency installation, CI
@@ -68,7 +69,9 @@ userconfig as a build-only secret:
 UPFILE_NPM_CONFIG_FILE="$(npm config get userconfig)" \
   docker compose -f compose.yaml -f compose.npm-config.yaml config --quiet
 UPFILE_NPM_CONFIG_FILE="$(npm config get userconfig)" \
-  docker compose -f compose.yaml -f compose.npm-config.yaml up --build -d
+  docker compose -f compose.yaml -f compose.npm-config.yaml build
+UPFILE_NPM_CONFIG_FILE="$(npm config get userconfig)" \
+  docker compose -f compose.yaml -f compose.npm-config.yaml up -d
 ```
 
 The override defaults to `${HOME}/.npmrc` if `UPFILE_NPM_CONFIG_FILE` is unset;
@@ -203,15 +206,16 @@ storage; protect the host and backups.
 
 ```sh
 docker compose config --quiet
-docker compose up --build -d
+docker compose pull
+docker compose up -d
 docker compose ps
 docker compose logs --tail=100 app cloudflared
 docker compose exec app /upfile healthcheck
 ```
 
-Configuration validation does not prove that a token is valid, image builds
-succeed, or Cloudflare routing works. Check the tunnel's connector health in the
-dashboard, then test both hostnames.
+Configuration validation does not prove that a token is valid, image pulls
+succeed, or Cloudflare routing works. Check the tunnel's connector health in
+the dashboard, then test both hostnames.
 
 The public `/healthz` endpoint and `upfile healthcheck` support local process
 readiness. Compose waits for app health before starting the connector. A new

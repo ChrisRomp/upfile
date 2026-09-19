@@ -154,7 +154,7 @@ func (a *App) saveContainer(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		if _, err = tx.Exec(`INSERT INTO links(id,container_id,sender,expires,max_file,created,hash)
-			VALUES(?,?,'Default link',?,NULL,?,?)`, linkID, id,
+			VALUES(?,?,?,?,NULL,?,?)`, linkID, id, v.Name,
 			now.Add(time.Duration(s.DefaultLinkHours)*time.Hour).Unix(), now.Unix(), digest(secret)); err != nil {
 			return err
 		}

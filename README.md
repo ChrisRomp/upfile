@@ -2,6 +2,9 @@
 
 Self-hosted file collection without uploader accounts. Create a request container,
 share an expiring upload link, and receive multiple files with optional comments.
+Files start uploading as soon as they are selected or dropped. Senders can add
+or edit comments during or after transfer on the same page; comments save
+automatically while the link and upload session remain valid.
 Links stay reusable until expired or revoked. Administrators sign in through
 Cloudflare Access using their Cloudflare account.
 
@@ -45,8 +48,8 @@ This repository does not create Cloudflare resources.
    Decimal MB values are supported; existing limits retain their exact byte values.
    All size-entry fields use MB, including new/edit request and create/edit upload
    link limits. Leave an override blank to inherit its parent maximum.
-   Creating a container automatically creates a reusable upload link labeled
-   **Default link** and immediately shows its full URL for copying. It inherits
+   Creating a container automatically creates a reusable upload link with the
+   **same name as the container** and immediately shows its full URL for copying. It inherits
    the request's size limit and uses the configured default expiration.
    Additional sender-specific links can still be created within the request.
    The secret is not recoverable later.
@@ -175,6 +178,8 @@ deploy services.
 See [operations and backup/restore](docs/deployment.md),
 [security assumptions](docs/security.md), and the [API contract](docs/api.md).
 No third-party analytics, fonts, or scripts are loaded by the application UI.
+Public and admin pages include a **Powered by upfile** footer linking to the
+source repository in a separate tab, without interrupting uploads.
 
 ## License
 

@@ -261,6 +261,7 @@ func (a *App) Public() http.Handler {
 	m.HandleFunc("GET /api/links/{link}", a.endpoint(a.publicLink))
 	m.HandleFunc("POST /api/links/{link}/attempts", a.endpoint(a.admit))
 	m.HandleFunc("GET /api/links/{link}/attempts/{attempt}", a.endpoint(a.receipt))
+	m.HandleFunc("PUT /api/links/{link}/attempts/{attempt}/comment", a.endpoint(a.saveAttemptComment))
 	m.HandleFunc("POST /api/links/{link}/attempts/{attempt}/cancel", a.endpoint(a.cancelAttempt))
 	m.HandleFunc("POST /api/links/{link}/reset", a.endpoint(a.reset))
 	m.HandleFunc("HEAD /api/links/{link}/uploads/{attempt}", a.uploadHTTP)

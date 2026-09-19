@@ -19,6 +19,8 @@ async function mockSurface(page, surface, linkStatus = 200) {
       await route.fulfill({ json: settings });
     } else if (pathname === '/api/containers') {
       await route.fulfill({ json: { items: [], total: 0 } });
+    } else if (pathname === `/api/links/${id}/attempts`) {
+      await route.fulfill({ json: { id: 'd'.repeat(32), status: 'completed', size: 4, offset: 4 } });
     } else if (pathname === `/api/links/${id}`) {
       await route.fulfill({ status: linkStatus, json: linkStatus === 200 ? {
         id, title: 'Public request', instructions: '', max_file_bytes: 1_000_000,
@@ -34,8 +36,19 @@ async function mockSurface(page, surface, linkStatus = 200) {
 
 async function expectStaticBrand(page) {
   await expect(page.locator('.brand')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'upfile', exact: true })).toHaveCount(0);
+  await expect(page.locator('.site-header').getByRole('link', { name: 'upfile', exact: true })).toHaveCount(0);
   await expect(page.locator('.brand')).not.toHaveAttribute('href');
+  await expectSourceFooter(page);
+}
+
+async function expectSourceFooter(page) {
+  const footer = page.locator('footer');
+  await expect(footer).toContainText('Powered by upfile');
+  const source = footer.getByRole('link', { name: 'upfile', exact: true });
+  await expect(source).toBeVisible();
+  await expect(source).toHaveAttribute('href', 'https://github.com/chrisromp/upfile');
+  await expect(source).toHaveAttribute('target', '_blank');
+  await expect(source).toHaveAttribute('rel', 'noopener noreferrer');
 }
 
 test('public branding does not navigate away or discard selected files', async ({ page }) => {
@@ -44,6 +57,7 @@ test('public branding does not navigate away or discard selected files', async (
   await expect(page.getByRole('heading', { name: 'Public request' })).toBeVisible();
   await expectStaticBrand(page);
   await page.locator('input[type=file]').setInputFiles({ name: 'keep.txt', mimeType: 'text/plain', buffer: Buffer.from('keep') });
+  await expect(page.locator('.summary-counts')).toContainText('1 received');
   const url = page.url();
   await page.locator('.brand').click();
   expect(page.url()).toBe(url);
@@ -79,7 +93,8 @@ test('admin branding retains home navigation, including its wrong-surface page',
   await mockSurface(page, 'admin');
   await page.goto(`${origin('admin')}/settings`);
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
-  const home = page.getByRole('link', { name: 'upfile', exact: true });
+  await expectSourceFooter(page);
+  const home = page.locator('.site-header').getByRole('link', { name: 'upfile', exact: true });
   await expect(home).toHaveAttribute('href', '/admin/');
   await home.click();
   await expect(page.getByRole('heading', { name: 'File requests', exact: true })).toBeVisible();
@@ -87,4 +102,5 @@ test('admin branding retains home navigation, including its wrong-surface page',
   await page.goto(`${origin('admin')}/u/${id}`);
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
   await expect(home).toHaveAttribute('href', '/admin/');
+  await expectSourceFooter(page);
 });

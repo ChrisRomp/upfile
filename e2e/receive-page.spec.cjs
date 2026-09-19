@@ -64,8 +64,8 @@ test('receive page labels the request and validates automatically before sending
   await expect(page.getByRole('button', { name: 'Check link status', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Check status', exact: true })).toHaveCount(0);
   await page.locator('input[type=file]').setInputFiles({ name: 'invoice.txt', mimeType: 'text/plain', buffer: Buffer.from('invoice') });
-  await page.getByRole('button', { name: 'Send 1 file', exact: true }).click();
   await expect(page.getByRole('alert').first()).toContainText(/expired|revoked/);
+  await expect(page.getByRole('button', { name: /^Send / })).toHaveCount(0);
   expect(checks).toBe(2);
   expect(admission).toBe(false);
 });
@@ -109,8 +109,6 @@ for (const busy of [false, true]) {
         await expect(page.getByText('An abandoned upload is available to clean up.', { exact: true })).toBeVisible();
         await expect(page.getByText(/You can send new files or discard the abandoned partial upload/)).toBeVisible();
         await expect(page.getByText(/blocking this link/)).toHaveCount(0);
-        await page.locator('input[type=file]').setInputFiles(file('next.txt', 'next'));
-        await expect(page.getByRole('button', { name: 'Send 1 file', exact: true })).toBeEnabled();
       }
     });
   }
@@ -173,20 +171,105 @@ test('a reset rejected after server state changes keeps the confirmation and can
   await expect(page.locator('input[type=file]')).toBeDisabled();
 });
 
-test('normal queue keeps file selection, comments, removal, and send controls without recovery buttons', async ({ page }) => {
-  await mockLink(page, () => linkInfo());
+test('selection starts uploads and dropped files join the queue while comments save', async ({ page }) => {
+  const admissions = [];
+  const comments = [];
+  let release;
+  await mockLink(page, () => linkInfo(), async (route, pathname) => {
+    if (pathname.endsWith('/attempts')) {
+      admissions.push(route.request().postDataJSON());
+      const attempt = admissions.length === 1 ? 'd'.repeat(32) : 'e'.repeat(32);
+      await route.fulfill({ json: {
+        id: attempt, status: admissions.length === 1 ? 'uploading' : 'completed', size: 7, offset: 0,
+        upload_url: `${new URL(publicURL).origin}/api/links/${id}/uploads/${attempt}`,
+      } });
+    } else if (pathname.endsWith('/comment')) {
+      expect(route.request().method()).toBe('PUT');
+      expect(route.request().headers()['x-upfile-request']).toBe('1');
+      comments.push(route.request().postDataJSON().comment);
+      await route.fulfill({ json: { comment: comments.at(-1) } });
+    } else if (pathname.includes('/uploads/')) {
+      if (route.request().method() === 'PATCH') await new Promise(resolve => { release = resolve; });
+      await route.fulfill({
+        status: route.request().method() === 'HEAD' ? 200 : 204,
+        headers: { 'Tus-Resumable': '1.0.0', 'Upload-Length': '7', 'Upload-Offset': route.request().method() === 'HEAD' ? '0' : '7' },
+      });
+    } else {
+      expect(pathname).toBe(`/api/links/${id}/attempts/${'d'.repeat(32)}`);
+      await route.fulfill({ json: { id: 'd'.repeat(32), status: 'completed', size: 7, offset: 7 } });
+    }
+  });
   await page.goto(publicURL);
   await expect(page.getByText('File request', { exact: true })).toBeVisible();
   await expect(page.getByText('No files selected yet.', { exact: true })).toBeVisible();
   await page.locator('input[type=file]').setInputFiles(file('invoice.txt', 'invoice'));
-  await page.getByRole('textbox', { name: /Comment/ }).fill('September');
-  await expect(page.getByRole('textbox', { name: /Comment/ })).toHaveValue('September');
-  await expect(page.getByRole('button', { name: 'Send 1 file', exact: true })).toBeEnabled();
+  await expect.poll(() => typeof release).toBe('function');
+  await expect(page.locator('input[type=file]')).toBeEnabled();
+  const first = page.getByRole('listitem').filter({ hasText: 'invoice.txt' });
+  await first.getByRole('textbox').fill('September');
+  await expect(first.getByText('Comment saved.', { exact: true })).toBeVisible();
+  expect(comments).toEqual(['September']);
+  await page.locator('.drop-area').evaluate(element => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File(['receipt'], 'dropped.txt', { type: 'text/plain' }));
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+  });
+  const second = page.getByRole('listitem').filter({ hasText: 'dropped.txt' });
+  await second.getByRole('textbox').fill('Queued note');
+  expect(admissions).toHaveLength(1);
+  await expect(second).toContainText('queued');
+  release();
+  await expect(page.locator('.summary-counts')).toHaveText('2 received · 0 failed · 0 canceled · 0 waiting');
+  await expect(second.getByText('Comment saved.', { exact: true })).toBeVisible();
+  expect(admissions.map(item => item.name)).toEqual(['invoice.txt', 'dropped.txt']);
+  expect(comments).toEqual(['September', 'Queued note']);
+  await first.getByRole('textbox').fill('Updated after receipt');
+  await expect(first.getByText('Comment saved.', { exact: true })).toBeVisible();
+  await first.getByRole('textbox').fill('');
+  await expect(first.getByText('Comment saved.', { exact: true })).toBeVisible();
+  expect(comments).toEqual(['September', 'Queued note', 'Updated after receipt', '']);
+  await expect(page.getByRole('button', { name: /^Send / })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Check.*status|Reset unfinished upload/ })).toHaveCount(0);
-  await expectProgress(page, 0, 7, 0);
-  await page.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expectProgress(page, 14, 14, 100);
+  await page.getByRole('button', { name: 'Clear finished', exact: true }).click();
   await expect(page.getByText('No files selected yet.', { exact: true })).toBeVisible();
   await expect(page.getByRole('progressbar')).toHaveCount(0);
+});
+
+test('invalid or failed comments remain editable without undoing a completed upload', async ({ page }) => {
+  let fail = true;
+  const comments = [];
+  await mockLink(page, () => linkInfo(), async (route, pathname) => {
+    if (pathname.endsWith('/attempts')) {
+      await route.fulfill({ json: { id: 'd'.repeat(32), status: 'completed', size: 0, offset: 0 } });
+    } else {
+      expect(pathname).toBe(`/api/links/${id}/attempts/${'d'.repeat(32)}/comment`);
+      comments.push(route.request().postDataJSON().comment);
+      if (fail) {
+        await route.fulfill({ status: 401, json: { code: 'session_required', error: 'Session expired.' } });
+      } else {
+        await route.fulfill({ json: { comment: comments.at(-1) } });
+      }
+    }
+  });
+  await page.goto(publicURL);
+  await page.locator('input[type=file]').setInputFiles(file('empty.txt'));
+  await expect(page.locator('.summary-counts')).toHaveText('1 received · 0 failed · 0 canceled · 0 waiting');
+  const comment = page.getByRole('textbox', { name: /Comment/ });
+  await comment.fill('é'.repeat(1025));
+  await expect(comment).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByRole('alert')).toContainText('2,048 UTF-8 bytes');
+  expect(comments).toEqual([]);
+  await expect(page.getByRole('button', { name: 'Clear finished' })).toBeDisabled();
+  await comment.fill('Keep this draft');
+  await expect(page.getByRole('alert')).toContainText('Comment not saved: Session expired.');
+  await expect(comment).toHaveValue('Keep this draft');
+  await expect(page.locator('.summary-counts')).toContainText('1 received · 0 failed');
+  fail = false;
+  await page.getByRole('button', { name: 'Retry comment', exact: true }).click();
+  await expect(page.getByText('Comment saved.', { exact: true })).toBeVisible();
+  expect(comments).toEqual(['Keep this draft', 'Keep this draft']);
+  await expect(page.getByRole('button', { name: 'Clear finished' })).toBeEnabled();
 });
 
 for (const count of [1, 2]) {
@@ -201,17 +284,10 @@ for (const count of [1, 2]) {
     });
     await page.goto(publicURL);
     await page.locator('input[type=file]').setInputFiles(Array.from({ length: count }, (_, index) => file(`empty-${index}.txt`)));
-    await expectProgress(page, 0, 1, 0);
-    await page.getByRole('button', { name: `Send ${count} ${count === 1 ? 'file' : 'files'}`, exact: true }).click();
     await expect(page.locator('.summary-counts')).toHaveText(`${count} received · 0 failed · 0 canceled · 0 waiting`);
     await expectProgress(page, 1, 1, 100);
     expect(admissions).toBe(count);
-    await page.locator('input[type=file]').setInputFiles(file('pending.txt'));
-    await expect(page.locator('.summary-counts')).toHaveText(`${count} received · 0 failed · 0 canceled · 1 waiting`);
-    await expectProgress(page, 0, 1, 0);
     await page.getByRole('button', { name: 'Clear finished', exact: true }).click();
-    await expectProgress(page, 0, 1, 0);
-    await page.getByRole('button', { name: 'Remove', exact: true }).click();
     await expect(page.getByRole('progressbar')).toHaveCount(0);
   });
 }
@@ -230,7 +306,6 @@ for (const completedFirst of [false, true]) {
     await page.locator('input[type=file]').setInputFiles([
       ...(completedFirst ? [file('received.txt')] : []), file('failed.txt'), file('pending.txt'),
     ]);
-    await page.getByRole('button', { name: `Send ${completedFirst ? 3 : 2} files`, exact: true }).click();
     await expect(page.locator('.summary-counts')).toHaveText(`${completedFirst ? 1 : 0} received · 1 failed · 0 canceled · 1 waiting`);
     await expectProgress(page, 0, 1, 0);
     await page.getByRole('button', { name: 'Remove', exact: true }).click();
@@ -258,7 +333,6 @@ for (const completedFirst of [false, true]) {
     await page.goto(publicURL);
     const files = [...(completedFirst ? [file('received.txt')] : []), file('cancel.txt')];
     await page.locator('input[type=file]').setInputFiles(files);
-    await page.getByRole('button', { name: `Send ${files.length} ${files.length === 1 ? 'file' : 'files'}`, exact: true }).click();
     await expect.poll(() => typeof finishAdmission).toBe('function');
     await expectProgress(page, 0, 1, 0);
     await page.getByRole('button', { name: 'Cancel remaining', exact: true }).click();
@@ -276,13 +350,11 @@ test('mixed zero-byte and nonempty completed files retain byte-based progress', 
   });
   await page.goto(publicURL);
   await page.locator('input[type=file]').setInputFiles([file('empty.txt'), file('invoice.txt', 'invoice')]);
-  await expectProgress(page, 0, 7, 0);
-  await page.getByRole('button', { name: 'Send 2 files', exact: true }).click();
   await expect(page.locator('.summary-counts')).toHaveText('2 received · 0 failed · 0 canceled · 0 waiting');
   await expectProgress(page, 7, 7, 100);
 });
 
-for (const invalid of ['size', 'filename', 'comment']) {
+for (const invalid of ['size', 'filename']) {
   test(`an invalid ${invalid} does not block valid files in the batch`, async ({ page }) => {
     const admitted = [];
     await mockLink(page, () => linkInfo(), async (route, pathname) => {
@@ -299,10 +371,6 @@ for (const invalid of ['size', 'filename', 'comment']) {
       file('after.txt', 'after'),
     ]);
     const badItem = page.getByRole('listitem').filter({ hasText: badName });
-    if (invalid === 'comment') await badItem.getByRole('textbox').fill('é'.repeat(1025));
-    await expect(badItem.getByRole('status')).toContainText(/exceeds/);
-    await expect(page.getByRole('button', { name: 'Send 3 files', exact: true })).toBeEnabled();
-    await page.getByRole('button', { name: 'Send 3 files', exact: true }).click();
     await expect(page.locator('.summary-counts')).toHaveText('2 received · 1 failed · 0 canceled · 0 waiting');
     await expect(badItem.getByRole('alert')).toContainText(/exceeds/);
     expect(admitted).toEqual(['before.txt', 'after.txt']);

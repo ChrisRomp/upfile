@@ -65,20 +65,21 @@ type Link struct {
 }
 
 type Attempt struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	Size        int64  `json:"size"`
-	Offset      int64  `json:"offset"`
-	UploadURL   string `json:"upload_url"`
-	CreatedAt   int64  `json:"created_at"`
-	LinkID      string `json:"-"`
-	SessionHash string `json:"-"`
-	Key         string `json:"-"`
-	Name        string `json:"-"`
-	Comment     string `json:"-"`
-	Last        int64  `json:"-"`
-	Reserved    int64  `json:"-"`
-	Cleanup     bool   `json:"-"`
+	ID               string `json:"id"`
+	Status           string `json:"status"`
+	Size             int64  `json:"size"`
+	Offset           int64  `json:"offset"`
+	UploadURL        string `json:"upload_url"`
+	CreatedAt        int64  `json:"created_at"`
+	LinkID           string `json:"-"`
+	SessionHash      string `json:"-"`
+	Key              string `json:"-"`
+	Name             string `json:"-"`
+	Comment          string `json:"-"`
+	AdmissionComment string `json:"-"`
+	Last             int64  `json:"-"`
+	Reserved         int64  `json:"-"`
+	Cleanup          bool   `json:"-"`
 }
 
 type File struct {

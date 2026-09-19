@@ -19,7 +19,7 @@ func TestCreatingContainerIncludesUsableDefaultLink(t *testing.T) {
 		"name": "One-step request", "instructions": "Send files", "max_file_bytes": 512,
 	}, nil, 200))
 	link := created.InitialLink
-	if created.LinkCount != 1 || link.ContainerID != created.ID || link.SenderLabel != "Default link" || link.MaxFileBytes != nil || link.EffectiveMax != 512 {
+	if created.LinkCount != 1 || link.ContainerID != created.ID || link.SenderLabel != created.Name || link.MaxFileBytes != nil || link.EffectiveMax != 512 {
 		t.Fatalf("incorrect default link: %+v %+v", created.Container, link)
 	}
 	if link.ExpiresAt != now.Add(48*time.Hour).Unix() {
@@ -65,6 +65,9 @@ func TestCreatingContainerIncludesUsableDefaultLink(t *testing.T) {
 	h.a.mu.Unlock()
 	if err != nil || current.Hash != hash || current.EffectiveMax != 256 {
 		t.Fatal("link did not inherit the edited limit")
+	}
+	if current.SenderLabel != created.Name {
+		t.Fatal("renaming the container unexpectedly renamed its initial link")
 	}
 }
 

@@ -3,7 +3,7 @@ import { api, APIError, errorMessage, openPublicLink } from './api';
 import { bytes, date, utf8Length } from './format';
 import type { PublicLink } from './types';
 import { UploadQueue, validateFile } from './upload';
-import { Badge, Brand, Confirm, Empty, Notice } from './ui';
+import { Badge, Brand, Confirm, Empty, Footer, Notice } from './ui';
 
 export default function Public({ id }: { id: string }) {
   const [link, setLink] = useState<PublicLink>();
@@ -33,7 +33,7 @@ export default function Public({ id }: { id: string }) {
         <button onClick={retry}>Check session again</button>
       </section>}
       {link && <Uploader initialLink={link} />}
-      <footer>Keep this page open while files are sending. Reloading clears your selected files; it does not restore an unfinished transfer.</footer>
+      <Footer>Keep this page open while files are sending or comments are saving. Reloading clears your selected files; it does not restore an unfinished transfer or unsaved comments.</Footer>
     </main>
   </>;
 }
@@ -53,10 +53,13 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
   const [confirmReset, setConfirmReset] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [now, setNow] = useState(Date.now() / 1000);
-  const picker = useRef<HTMLInputElement>(null);
+  const sending = useRef(false);
+  const pendingSend = useRef(false);
   const expired = now >= link.expires_at || now >= link.session_expires_at;
   const hasResumable = state.items.some((item) => item.submitted && !item.fresh && ['failed', 'queued'].includes(item.status));
-  const disabled = state.running || expired || (link.busy && !hasResumable);
+  const selectionDisabled = expired || (link.busy && !state.running && !hasResumable);
+  const disabled = state.running || checking || selectionDisabled;
+  const unsavedComments = state.items.some((item) => item.status !== 'canceled' && item.commentStatus !== 'saved');
   const total = state.items.reduce((sum, item) => sum + item.file.size, 0);
   const sent = state.items.reduce((sum, item) => sum + item.sent, 0);
   const completed = state.items.filter((item) => item.status === 'completed').length;
@@ -70,11 +73,11 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
   }, []);
   useEffect(() => {
     const preventClose = (event: BeforeUnloadEvent) => {
-      if (state.running) { event.preventDefault(); event.returnValue = ''; }
+      if (state.running || unsavedComments) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', preventClose);
     return () => window.removeEventListener('beforeunload', preventClose);
-  }, [state.running]);
+  }, [state.running, unsavedComments]);
   async function check() {
     setChecking(true); setError('');
     try {
@@ -85,10 +88,24 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
     finally { setChecking(false); }
   }
   async function send() {
-    const info = await check();
-    if (!info || (info.busy && !hasResumable)) return;
-    await queue.start();
-    await check();
+    if (sending.current) { pendingSend.current = true; return; }
+    sending.current = true;
+    pendingSend.current = false;
+    try {
+      const info = await check();
+      const resumable = queue.snapshot().items.some((item) => item.submitted && !item.fresh && ['failed', 'queued'].includes(item.status));
+      if (!info || (info.busy && !resumable)) return;
+      await queue.start();
+      await check();
+    } finally {
+      sending.current = false;
+      if (pendingSend.current && !queue.snapshot().message && queue.snapshot().items.some((item) => item.status === 'queued')) void send();
+    }
+  }
+  function add(files: File[]) {
+    if (!files.length || selectionDisabled) return;
+    queue.add(files);
+    void send();
   }
   async function cancel(id?: string) {
     setError('');
@@ -113,32 +130,40 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
     <section className="card queue-card" aria-labelledby="queue-title">
       <div className="section-heading"><h2 id="queue-title">Your files</h2><span className="muted">{state.items.length} selected</span></div>
       <div className={`drop-area ${dragging ? 'dragging' : ''}`}
-        onDragOver={(event) => { event.preventDefault(); if (!disabled) setDragging(true); }}
+        onDragOver={(event) => { event.preventDefault(); if (!selectionDisabled) setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={(event) => {
           event.preventDefault(); setDragging(false);
-          if (!disabled) queue.add(Array.from(event.dataTransfer.files));
+          add(Array.from(event.dataTransfer.files));
         }}>
         <span className="upload-symbol" aria-hidden="true">↥</span>
         <label htmlFor="files" className="file-label">Choose files <span className="muted">or drop them here</span></label>
-        <input ref={picker} id="files" type="file" multiple disabled={disabled}
-          onChange={(event) => { queue.add(Array.from(event.target.files || [])); event.target.value = ''; }} />
-        <p className="small muted">One at a time, in the order you choose. No account needed.</p>
+        <input id="files" type="file" multiple disabled={selectionDisabled}
+          onChange={(event) => { add(Array.from(event.target.files || [])); event.target.value = ''; }} />
+        <p className="small muted">Uploads start automatically, one file at a time. Add comments while files send; changes save automatically.</p>
       </div>
       {state.items.length === 0 && <Empty>No files selected yet.</Empty>}
       <ul className="queue-list">
         {state.items.map((item) => {
           const active = ['admitting', 'uploading', 'verifying'].includes(item.status);
-          const issue = item.status === 'queued' ? validateFile(item.file, item.comment, link.max_file_bytes) : '';
+          const issue = item.status === 'queued' ? validateFile(item.file, '', link.max_file_bytes) : '';
           return <li key={item.id} className="queue-item">
             <div className="section-heading"><div className="file-heading"><strong>{item.file.name}</strong><span className="small muted">{bytes(item.file.size)}</span></div><Badge status={item.status} /></div>
-            {(item.status === 'queued' || item.comment) && <label className="comment-label" htmlFor={`comment-${item.id}`}>
+            <label className="comment-label" htmlFor={`comment-${item.id}`}>
               Comment <span className="muted">(optional · {utf8Length(item.comment).toLocaleString()}/2,048 bytes)</span>
               <textarea id={`comment-${item.id}`} rows={2} value={item.comment}
-                disabled={state.running || item.status !== 'queued' || !!item.submitted}
+                disabled={expired || item.status === 'canceled'}
                 aria-invalid={utf8Length(item.comment) > 2048}
                 onChange={(event) => queue.comment(item.id, event.target.value)} />
-            </label>}
+            </label>
+            {item.status !== 'canceled' && <div className="small">
+              <span className={item.commentError ? 'error-text' : 'muted'} role={item.commentError ? 'alert' : 'status'}>
+                {item.commentError || (item.commentStatus === 'saved' ? 'Comment saved.' :
+                  item.commentStatus === 'saving' ? 'Saving comment…' : 'Comment not yet saved…')}
+              </span>
+              {item.commentStatus === 'failed' && utf8Length(item.comment) <= 2048 &&
+                <button disabled={expired} onClick={() => queue.retryComment(item.id)}>Retry comment</button>}
+            </div>}
             {(active || item.sent > 0) && <><progress aria-label={`Upload progress for ${item.file.name}`} value={item.sent} max={item.file.size || 1} />
               <span className="small muted">{bytes(item.sent)} / {bytes(item.file.size)}</span></>}
             <div className="item-footer"><span className={issue || item.status === 'failed' ? 'error-text' : 'muted'} role={item.status === 'failed' ? 'alert' : 'status'}>{issue || item.message}</span>
@@ -147,7 +172,7 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
                 {item.status === 'queued' && !state.running && item.submitted && <button onClick={() => cancel(item.id)}>Cancel attempt</button>}
                 {(active || (item.status === 'queued' && state.running)) && <button onClick={() => cancel(item.id)}>Cancel</button>}
                 {item.status === 'failed' && !state.running && item.submitted && !item.fresh && <button onClick={() => cancel(item.id)}>Cancel attempt</button>}
-                {(item.status === 'failed' || item.status === 'canceled') && <button disabled={disabled} onClick={() => queue.retry(item.id)}>
+                {(item.status === 'failed' || item.status === 'canceled') && <button disabled={disabled} onClick={() => { queue.retry(item.id); void send(); }}>
                   {item.fresh || item.status === 'canceled' ? 'Start fresh' : 'Retry same upload'}
                 </button>}
               </div>
@@ -163,9 +188,9 @@ function Uploader({ initialLink }: { initialLink: PublicLink }) {
       </div>}
       <Notice error>{state.message}</Notice>
       <div className="actions send-actions">
-        {!state.running && (completed > 0 || canceled > 0) && <button onClick={() => queue.clearFinished()}>Clear finished</button>}
+        {!state.running && (completed > 0 || canceled > 0) && <button disabled={unsavedComments} onClick={() => queue.clearFinished()}>Clear finished</button>}
         {state.running ? <button className="danger" onClick={() => cancel()}>Cancel remaining</button> :
-          <button className="primary" disabled={disabled || checking || !queued.length} onClick={send}>{checking ? 'Checking…' : <>Send {queued.length || ''} {queued.length === 1 ? 'file' : 'files'} <span aria-hidden="true">↑</span></>}</button>}
+          queued.length > 0 && <button className="primary" disabled={disabled} onClick={send}>{checking ? 'Checking…' : 'Resume uploads'}</button>}
       </div>
     </section>
     {confirmReset && <Confirm title="Discard the unfinished upload?" label="Reset upload" onClose={() => setConfirmReset(false)} action={async () => {

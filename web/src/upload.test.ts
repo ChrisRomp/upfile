@@ -195,7 +195,8 @@ describe('serial upload queue', () => {
     expect(tus.options).toHaveLength(0);
     expect(queue.snapshot().items[0].message).toContain('invalid upload address');
   });
-  it('keeps admitted comments immutable and does not remove an unresolved attempt', async () => {
+  it('keeps editable comments without removing an unresolved attempt', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(async () => response({ error: 'No space', code: 'storage_full' }, 507)));
     const queue = new UploadQueue(info);
     queue.add([file()]);
@@ -205,7 +206,9 @@ describe('serial upload queue', () => {
     queue.retry(id);
     queue.comment(id, 'changed');
     queue.remove(id);
-    expect(queue.snapshot().items[0].comment).toBe('original');
+    expect(queue.snapshot().items[0].comment).toBe('changed');
+    await vi.runAllTimersAsync();
+    expect(queue.snapshot().items[0].commentStatus).toBe('pending');
     expect(queue.snapshot().items).toHaveLength(1);
   });
   it('coalesces concurrent starts without duplicate admissions or transfers', async () => {
@@ -331,6 +334,202 @@ describe('serial upload queue', () => {
     expect(bodies).toHaveLength(2);
     expect(bodies[0]).toBe(bodies[1]);
     expect(queue.snapshot().items[0].status).toBe('completed');
+  });
+});
+describe('live comment autosave', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+
+  it('debounces edits during transfer, accepts appended files, and saves after completion', async () => {
+    tus.hold = true;
+    const comments: string[] = [];
+    let admissions = 0;
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      if (path.endsWith('/comment')) {
+        expect(init.method).toBe('PUT');
+        comments.push(JSON.parse(init.body as string).comment);
+        return response({ comment: comments.at(-1) });
+      }
+      if (path.endsWith('/attempts')) return response(receipt(`b${++admissions}`));
+      return response(receipt(`b${admissions}`, 'completed'));
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const id = queue.snapshot().items[0].id;
+    const run = queue.start();
+    await vi.waitFor(() => expect(tus.options).toHaveLength(1));
+    queue.comment(id, 'first');
+    queue.comment(id, 'latest');
+    await vi.advanceTimersByTimeAsync(399);
+    expect(comments).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(comments).toEqual(['latest']);
+    expect(queue.snapshot().items[0]).toMatchObject({ status: 'uploading', commentStatus: 'saved' });
+    queue.add([file('appended.txt')]);
+    tus.hold = false;
+    tus.options[0].onSuccess?.({ lastResponse: {} as never });
+    await run;
+    expect(queue.snapshot().items.map(item => item.status)).toEqual(['completed', 'completed']);
+    queue.comment(id, 'after receipt');
+    await vi.runAllTimersAsync();
+    queue.comment(id, '');
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual(['latest', 'after receipt', '']);
+    expect(queue.snapshot().items[0]).toMatchObject({ savedComment: '', commentStatus: 'saved' });
+  });
+
+  it('keeps retry payloads stable while admission is interrupted and comments change', async () => {
+    const bodies: string[] = [];
+    const comments: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      if (path.endsWith('/comment')) {
+        comments.push(body.comment);
+        return response({ comment: body.comment });
+      }
+      bodies.push(init.body as string);
+      if (bodies.length === 1) throw new TypeError('Lost admission');
+      return response(receipt('b1', 'completed'));
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const id = queue.snapshot().items[0].id;
+    const run = queue.start();
+    queue.comment(id, 'edited during admission');
+    await vi.runAllTimersAsync();
+    await run;
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toBe(bodies[1]);
+    expect(JSON.parse(bodies[0]).comment).toBe('');
+    expect(comments).toEqual(['edited during admission']);
+    expect(queue.snapshot().items[0].commentStatus).toBe('saved');
+  });
+
+  it('serializes saves and sends the latest edit after an in-flight save', async () => {
+    let release!: (value: Response) => void;
+    const comments: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      if (!path.endsWith('/comment')) return response(receipt('b1', 'completed'));
+      comments.push(JSON.parse(init.body as string).comment);
+      if (comments.length === 1) return new Promise<Response>(resolve => { release = resolve; });
+      return response({ comment: comments.at(-1) });
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    await queue.start();
+    const id = queue.snapshot().items[0].id;
+    queue.comment(id, 'in flight');
+    await vi.advanceTimersByTimeAsync(400);
+    queue.comment(id, 'intermediate');
+    queue.comment(id, '');
+    await vi.advanceTimersByTimeAsync(400);
+    expect(comments).toEqual(['in flight']);
+    expect(queue.snapshot().items[0].commentStatus).not.toBe('saved');
+    queue.clearFinished();
+    expect(queue.snapshot().items).toHaveLength(1);
+    release(response({ comment: 'in flight' }));
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual(['in flight', '']);
+    expect(queue.snapshot().items[0]).toMatchObject({ comment: '', savedComment: '', commentStatus: 'saved' });
+    queue.clearFinished();
+    expect(queue.snapshot().items).toHaveLength(0);
+  });
+
+  it('does not assume the previous value survived an unconfirmed write', async () => {
+    let release!: (value: Response) => void;
+    const comments: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      if (!path.endsWith('/comment')) return response(receipt('b1', 'completed'));
+      comments.push(JSON.parse(init.body as string).comment);
+      if (comments.length === 1) return new Promise<Response>(resolve => { release = resolve; });
+      return response({ comment: comments.at(-1) });
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    await queue.start();
+    const id = queue.snapshot().items[0].id;
+    queue.comment(id, 'possibly committed');
+    await vi.advanceTimersByTimeAsync(400);
+    queue.comment(id, '');
+    release(response({ error: 'Rejected retry', code: 'invalid_input' }, 400));
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual(['possibly committed', '']);
+    expect(queue.snapshot().items[0].commentStatus).toBe('saved');
+  });
+
+  it('shows bounded save failures without failing received files and supports retry', async () => {
+    let offline = true;
+    let writes = 0;
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+      if (!path.endsWith('/comment')) return response(receipt('b1', 'completed'));
+      writes++;
+      if (offline) throw new TypeError('Offline');
+      return response({ comment: 'keep this draft' });
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    await queue.start();
+    const id = queue.snapshot().items[0].id;
+    queue.comment(id, 'keep this draft');
+    await vi.runAllTimersAsync();
+    expect(writes).toBe(4);
+    expect(queue.snapshot().items[0]).toMatchObject({
+      status: 'completed', comment: 'keep this draft', commentStatus: 'failed',
+    });
+    expect(queue.snapshot().items[0].commentError).toContain('Comment not saved');
+    queue.clearFinished();
+    expect(queue.snapshot().items).toHaveLength(1);
+    offline = false;
+    queue.retryComment(id);
+    await vi.runAllTimersAsync();
+    expect(writes).toBe(5);
+    expect(queue.snapshot().items[0]).toMatchObject({ savedComment: 'keep this draft', commentStatus: 'saved', commentError: '' });
+  });
+
+  it('uploads files even with oversized comments and saves once the draft is corrected', async () => {
+    const comments: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      if (!path.endsWith('/comment')) return response(receipt('b1', 'completed'));
+      comments.push(JSON.parse(init.body as string).comment);
+      return response({ comment: comments.at(-1) });
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const id = queue.snapshot().items[0].id;
+    queue.comment(id, 'é'.repeat(1025));
+    await queue.start();
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual([]);
+    expect(queue.snapshot().items[0]).toMatchObject({ status: 'completed', commentStatus: 'failed' });
+    expect(queue.snapshot().items[0].commentError).toContain('2,048');
+    queue.comment(id, 'é'.repeat(1024));
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual(['é'.repeat(1024)]);
+    expect(queue.snapshot().items[0].commentStatus).toBe('saved');
+  });
+
+  it('saves pending edits when cancellation discovers a completed admission', async () => {
+    let recover = false;
+    const comments: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+      if (path.endsWith('/comment')) {
+        comments.push(JSON.parse(init.body as string).comment);
+        return response({ comment: comments.at(-1) });
+      }
+      if (!recover) throw new TypeError('Lost response');
+      return response(receipt('b1', 'completed'));
+    }));
+    const queue = new UploadQueue(info);
+    queue.add([file()]);
+    const id = queue.snapshot().items[0].id;
+    const run = queue.start();
+    await vi.runAllTimersAsync();
+    await run;
+    queue.comment(id, 'retain on recovered receipt');
+    recover = true;
+    await queue.cancel(id);
+    await vi.runAllTimersAsync();
+    expect(comments).toEqual(['retain on recovered receipt']);
+    expect(queue.snapshot().items[0]).toMatchObject({ status: 'completed', commentStatus: 'saved' });
   });
 });
 describe('upload retry guard and validation', () => {

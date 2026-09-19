@@ -153,7 +153,21 @@ jobs:
         env:
           IMAGE_TAGS: ${{ steps.tags.outputs.tags }}
         run: |
+          push_image() {
+            local image="$1"
+            for attempt in 1 2 3; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                return 1
+              fi
+              echo "Push failed; retrying in $((attempt * 5)) seconds."
+              sleep $((attempt * 5))
+            done
+          }
+
           while IFS= read -r tag; do
             docker tag upfile:ci "$IMAGE_NAME:$tag"
-            docker push "$IMAGE_NAME:$tag"
+            push_image "$IMAGE_NAME:$tag"
           done <<< "$IMAGE_TAGS"
